@@ -1,0 +1,42 @@
+# Git
+.git/
+.gitignore
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Env files (secrets)
+.env
+.env.*
+!.env.example
+
+# Data directory (SQLite DB) - mounted at runtime via volume
+data/
+*.db
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Project-specific, not needed in the image
+.agents/
+skills-lock.json
