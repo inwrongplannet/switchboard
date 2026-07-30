@@ -6,6 +6,8 @@ services:
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - SWITCHBOARD_PROVIDER=${SWITCHBOARD_PROVIDER:-groq}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - REDIS_URL=redis://redis:6379/0
       - SQLITE_DB_PATH=/app/data/switchboard.db

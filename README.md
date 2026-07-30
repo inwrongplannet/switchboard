@@ -77,54 +77,52 @@ SwitchBoard sits between your client applications and upstream LLM providers, of
 
 ## Prerequisites
 
-- **Python 3.11+**
-- **Docker** and **Docker Compose** (for containerised deployment)
-- **Redis** (included via Docker Compose, or run standalone)
-- A **Groq** API key (get one at [console.groq.com](https://console.groq.com))
-- A **Google AI** API key for embeddings (get one at [aistudio.google.com](https://aistudio.google.com))
-- Optional: **Google** and **Anthropic** API keys for provider routing
+- **Docker** and **Docker Compose v2** — that's all you need for the Quick Start below
+- **Python 3.11+** — only for local development without Docker
+
+Provider keys are optional at install time; you can add them any time from the Admin UI:
+
+- **Groq** — [console.groq.com](https://console.groq.com) (chat completions)
+- **Google AI** — [aistudio.google.com](https://aistudio.google.com) (semantic-cache embeddings)
+- **Anthropic** — [console.anthropic.com](https://console.anthropic.com) (optional extra provider)
 
 ---
 
-## Quick Start (Docker Compose)
-
-This is the recommended way to run the full stack — gateway, Redis, admin UI, Prometheus, and Grafana — with a single command.
-
-### 1. Clone the repository
+## Quick Start (one command)
 
 ```bash
 git clone https://github.com/<your-org>/switchboard.git
 cd switchboard
+./setup.sh
 ```
 
-### 2. Generate an encryption key
+`setup.sh` verifies your Docker install, generates the Fernet `ENCRYPTION_KEY` for you,
+prompts for any provider keys you want to seed, writes `.env`, brings the stack up, and
+waits until every service reports healthy. It is safe to re-run — existing `.env` values
+are reused and the file is backed up before each write.
+
+Useful flags:
+
+| Flag        | Effect                                                        |
+| ----------- | ------------------------------------------------------------- |
+| `--minimal` | Gateway + Redis + Admin UI only (skips Prometheus & Grafana)   |
+| `--yes`     | Non-interactive; reads keys from the environment or `.env`     |
+| `--rebuild` | Force a no-cache image rebuild                                |
+| `--dry-run` | Run all checks and write `.env`, but don't start containers    |
+
+<details>
+<summary>Manual setup (without the script)</summary>
 
 ```bash
+cp .env.example .env
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-### 3. Create a `.env` file
-
-```bash
-cp .env.example .env   # or create manually
-```
-
-Populate it with:
-
-```env
-GROQ_API_KEY=gsk_...
-GOOGLE_API_KEY=AIza...
-ANTHROPIC_API_KEY=sk-ant-...
-ENCRYPTION_KEY=<key-from-step-2>
-```
-
-### 4. Start all services
-
-```bash
+# paste the result as ENCRYPTION_KEY in .env, then:
 docker compose up --build
 ```
 
-### 5. Verify
+</details>
+
+### Verify
 
 | Service         | URL                          |
 | --------------- | ---------------------------- |

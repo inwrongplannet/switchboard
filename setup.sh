@@ -1,0 +1,605 @@
+#!/usr/bin/env bash
+#
+# SwitchBoard — one-command setup
+#
+#   ./setup.sh              interactive setup + launch
+#   ./setup.sh --help       all options
+#
+# Safe to re-run: existing .env values are reused and backed up, never clobbered.
+
+set -euo pipefail
+
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+readonly ENV_FILE=".env"
+readonly ENV_EXAMPLE=".env.example"
+readonly GATEWAY_URL="http://localhost:8000"
+readonly HEALTH_TIMEOUT=150   # seconds to wait for the gateway to answer /health
+
+# Flags
+ASSUME_YES=0
+MINIMAL=0
+REBUILD=0
+DRY_RUN=0
+USE_COLOR=1
+
+# Runtime state
+COMPOSE=""
+STEP=0
+TOTAL_STEPS=5
+SERVICES=()
+WARNINGS=()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Style
+# ─────────────────────────────────────────────────────────────────────────────
+
+setup_colors() {
+    if [[ $USE_COLOR -eq 0 ]] || [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]] || [[ "${TERM:-dumb}" == "dumb" ]]; then
+        BOLD="" DIM="" RESET="" RED="" GREEN="" YELLOW="" BLUE="" CYAN="" MAGENTA="" GREY=""
+        USE_COLOR=0
+    else
+        BOLD=$'\033[1m'    DIM=$'\033[2m'     RESET=$'\033[0m'
+        RED=$'\033[31m'    GREEN=$'\033[32m'  YELLOW=$'\033[33m'
+        BLUE=$'\033[34m'   CYAN=$'\033[36m'   MAGENTA=$'\033[35m'
+        GREY=$'\033[90m'
+    fi
+
+    # Unicode is safe on modern terminals (and when the locale is simply unset);
+    # only fall back when the locale explicitly names a non-UTF-8 charset.
+    local locale_hint="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+    if [[ -z "$locale_hint" || "$locale_hint" == *[Uu][Tt][Ff]* ]]; then
+        TICK="✔" CROSS="✘" WARN="▲" ARROW="→" BULLET="•"
+        SPIN_FRAMES=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+        UNICODE=1
+    else
+        TICK="OK" CROSS="XX" WARN="!!" ARROW="->" BULLET="*"
+        SPIN_FRAMES=('|' '/' '-' '\')
+        UNICODE=0
+    fi
+}
+
+banner() {
+    if [[ $UNICODE -eq 0 ]]; then
+        printf '\n%s== SWITCHBOARD ==%s\n' "$BOLD" "$RESET"
+        printf '%sSelf-hosted LLM gateway%s\n\n' "$DIM" "$RESET"
+        return
+    fi
+
+    local art=(
+'████ █   █ ███ ███ ████ █  █ ███  ████ ████ ████ ███ '
+'█    █   █  █   █  █    █  █ █  █ █  █ █  █ █  █ █  █'
+'████ █ █ █  █   █  █    ████ ███  █  █ ████ ███  █  █'
+'   █ ██ ██  █   █  █    █  █ █  █ █  █ █  █ █ █  █  █'
+'████ █   █ ███  █  ████ █  █ ███  ████ █  █ █  █ ███ '
+    )
+    # Vertical gradient: cyan → blue.
+    local grad=("$CYAN" "$CYAN" "$BLUE" "$BLUE" "$BLUE")
+
+    printf '\n'
+    local i
+    for i in "${!art[@]}"; do
+        printf '  %s%s%s%s\n' "$BOLD" "${grad[$i]}" "${art[$i]}" "$RESET"
+    done
+    printf '\n  %sOpen-source LLM gateway%s %s%s%s %ssemantic cache %s smart routing %s observability%s\n\n' \
+        "$BOLD" "$RESET" "$GREY" "$BULLET" "$RESET" "$DIM" "$BULLET" "$BULLET" "$RESET"
+}
+
+step()    { STEP=$((STEP + 1)); printf '\n%s%s[%d/%d]%s %s%s%s\n' "$BOLD" "$MAGENTA" "$STEP" "$TOTAL_STEPS" "$RESET" "$BOLD" "$1" "$RESET"; }
+ok()      { printf '  %s%s%s %s\n' "$GREEN" "$TICK" "$RESET" "$1"; }
+info()    { printf '  %s%s%s %s\n' "$CYAN" "$BULLET" "$RESET" "$1"; }
+note()    { printf '    %s%s%s\n' "$GREY" "$1" "$RESET"; }
+warn()    { printf '  %s%s%s %s\n' "$YELLOW" "$WARN" "$RESET" "$1"; WARNINGS+=("$1"); }
+fail()    { printf '  %s%s%s %s\n' "$RED" "$CROSS" "$RESET" "$1" >&2; }
+
+die() {
+    printf '\n%s%s Setup stopped.%s %s\n\n' "$BOLD$RED" "$CROSS" "$RESET" "$1" >&2
+    [[ $# -gt 1 ]] && printf '%sFix:%s %s\n\n' "$BOLD" "$RESET" "$2" >&2
+    exit 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+    cat <<EOF
+${BOLD}SwitchBoard setup${RESET}
+
+  ${DIM}Checks your Docker install, writes .env, and brings the stack up.${RESET}
+
+${BOLD}USAGE${RESET}
+  ./setup.sh [options]
+
+${BOLD}OPTIONS${RESET}
+  -y, --yes        Non-interactive. Reuse .env / environment values, prompt for nothing.
+      --minimal    Gateway + Redis + Admin UI only (skip Prometheus & Grafana).
+      --rebuild    Force a clean image rebuild (no cache).
+      --dry-run    Run every check and write .env, but don't start containers.
+      --no-color   Plain output, no ANSI escapes.
+  -h, --help       Show this help.
+
+${BOLD}ENVIRONMENT${RESET}
+  ${DIM}Pre-set any of these to skip its prompt (useful with --yes / in CI):${RESET}
+  GROQ_API_KEY   GOOGLE_API_KEY   ANTHROPIC_API_KEY   ENCRYPTION_KEY
+
+${BOLD}EXAMPLES${RESET}
+  ./setup.sh                              ${DIM}# guided first-time setup${RESET}
+  ./setup.sh --minimal                    ${DIM}# lighter stack, no metrics UI${RESET}
+  GROQ_API_KEY=gsk_... ./setup.sh --yes   ${DIM}# unattended${RESET}
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -y|--yes)    ASSUME_YES=1 ;;
+            --minimal)   MINIMAL=1 ;;
+            --rebuild)   REBUILD=1 ;;
+            --dry-run)   DRY_RUN=1 ;;
+            --no-color)  USE_COLOR=0 ;;
+            -h|--help)   setup_colors; usage; exit 0 ;;
+            *)           setup_colors; fail "Unknown option: $1"; printf '\n'; usage; exit 2 ;;
+        esac
+        shift
+    done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompts
+# ─────────────────────────────────────────────────────────────────────────────
+
+interactive() { [[ $ASSUME_YES -eq 0 && -t 0 ]]; }
+
+# ask_yes_no <question> <default:y|n>
+ask_yes_no() {
+    local question="$1" default="${2:-y}" hint reply
+    if ! interactive; then [[ "$default" == "y" ]]; return; fi
+    [[ "$default" == "y" ]] && hint="Y/n" || hint="y/N"
+    while true; do
+        printf '  %s?%s %s %s[%s]%s ' "$BOLD$CYAN" "$RESET" "$question" "$DIM" "$hint" "$RESET"
+        read -r reply || reply=""
+        reply="$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')"
+        [[ -z "$reply" ]] && reply="$default"
+        case "$reply" in
+            y|yes) return 0 ;;
+            n|no)  return 1 ;;
+            *)     note "Please answer y or n." ;;
+        esac
+    done
+}
+
+# ask_secret <label> <hint>  →  echoes the entered value on stdout
+ask_secret() {
+    local label="$1" hint="$2" value=""
+    printf '  %s?%s %s\n' "$BOLD$CYAN" "$RESET" "$label" >&2
+    printf '    %s%s%s\n' "$GREY" "$hint" "$RESET" >&2
+    printf '    %s%s%s ' "$GREY" "$ARROW" "$RESET" >&2
+    read -rs value || value=""
+    printf '\n' >&2
+    printf '%s' "$value"
+}
+
+mask() {
+    local v="$1" n=${#1}
+    if [[ $n -eq 0 ]]; then printf '%s(empty)%s' "$GREY" "$RESET"
+    elif [[ $n -le 10 ]]; then printf '%s%s%s' "$DIM" "$(printf '%*s' "$n" '' | tr ' ' '*')" "$RESET"
+    else printf '%s%s…%s%s' "$DIM" "${v:0:6}" "${v: -4}" "$RESET"
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# .env handling
+# ─────────────────────────────────────────────────────────────────────────────
+
+# read_env_value <key> <file> — value of KEY= in an env file, quotes stripped
+read_env_value() {
+    local key="$1" file="$2"
+    [[ -f "$file" ]] || return 0
+    KEY="$key" awk '
+        BEGIN { k = ENVIRON["KEY"] }
+        $0 ~ "^[[:space:]]*"k"[[:space:]]*=" {
+            sub("^[[:space:]]*"k"[[:space:]]*=[[:space:]]*", "")
+            gsub(/^["'"'"']|["'"'"']$/, "")
+            sub(/[[:space:]]+$/, "")
+            print; exit
+        }
+    ' "$file"
+}
+
+# upsert_env <key> <value> <file> — replace KEY= in place, or append it
+upsert_env() {
+    local key="$1" value="$2" file="$3" tmp
+    tmp="$(mktemp "${file}.XXXXXX")"
+    KEY="$key" VALUE="$value" awk '
+        BEGIN { k = ENVIRON["KEY"]; v = ENVIRON["VALUE"]; found = 0 }
+        $0 ~ "^[[:space:]]*"k"[[:space:]]*=" && !found { print k "=" v; found = 1; next }
+        { print }
+        END { if (!found) print k "=" v }
+    ' "$file" > "$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$file"
+}
+
+# A Fernet key is urlsafe-base64 of 32 random bytes: 43 chars + "=".
+generate_fernet_key() {
+    local key=""
+    if command -v openssl >/dev/null 2>&1; then
+        key="$(openssl rand -base64 32 | tr -d '\n' | tr '+/' '-_')"
+    elif command -v python3 >/dev/null 2>&1; then
+        key="$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+    elif [[ -r /dev/urandom ]] && command -v base64 >/dev/null 2>&1; then
+        key="$(head -c 32 /dev/urandom | base64 | tr -d '\n' | tr '+/' '-_')"
+    fi
+    printf '%s' "$key"
+}
+
+is_valid_fernet_key() {
+    [[ "$1" =~ ^[A-Za-z0-9_-]{43}=$ ]]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 1 — preflight
+# ─────────────────────────────────────────────────────────────────────────────
+
+port_in_use() {
+    local port="$1"
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    elif command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -qE "[:.]${port}[[:space:]]"
+    else
+        return 1
+    fi
+}
+
+port_owner() {
+    local port="$1"
+    command -v lsof >/dev/null 2>&1 || { printf 'another process'; return; }
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -F c 2>/dev/null | sed -n 's/^c//p' | head -1
+}
+
+preflight() {
+    step "Checking your environment"
+
+    [[ -f docker-compose.yml ]] || die \
+        "docker-compose.yml not found in $SCRIPT_DIR." \
+        "Run this script from inside the cloned SwitchBoard repo."
+
+    command -v docker >/dev/null 2>&1 || die \
+        "Docker is not installed." \
+        "Install Docker Desktop: ${BOLD}https://docs.docker.com/get-docker/${RESET}"
+    ok "Docker CLI found $(printf '%s%s%s' "$GREY" "$(docker --version 2>/dev/null | sed 's/,.*//')" "$RESET")"
+
+    if ! docker info >/dev/null 2>&1; then
+        local hint="Start the Docker daemon and re-run this script."
+        [[ "$(uname -s)" == "Darwin" ]] && hint="Open Docker Desktop (${BOLD}open -a Docker${RESET}), wait for it to finish starting, then re-run."
+        die "Docker is installed but the daemon isn't responding." "$hint"
+    fi
+    ok "Docker daemon is running"
+
+    if docker compose version >/dev/null 2>&1; then
+        COMPOSE="docker compose"
+        ok "Docker Compose v2 available"
+    elif command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE="docker-compose"
+        warn "Using legacy docker-compose v1 — v2 is recommended."
+        note "Upgrade: https://docs.docker.com/compose/install/"
+    else
+        die "Docker Compose is not available." \
+            "Install the Compose plugin: ${BOLD}https://docs.docker.com/compose/install/${RESET}"
+    fi
+
+    command -v curl >/dev/null 2>&1 || warn "curl not found — health checks will be skipped."
+    [[ -f "$ENV_EXAMPLE" ]] || warn "$ENV_EXAMPLE is missing — a fresh $ENV_FILE will be created from scratch."
+
+    # Ports — only meaningful if our own stack isn't already holding them.
+    local ours=""
+    ours="$($COMPOSE ps -q 2>/dev/null || true)"
+    if [[ -n "$ours" ]]; then
+        info "An existing SwitchBoard stack is running — it will be updated in place."
+        return
+    fi
+
+    local ports=(8000 3000 6379)
+    [[ $MINIMAL -eq 0 ]] && ports+=(9090 3001)
+    local port busy=0
+    for port in "${ports[@]}"; do
+        if port_in_use "$port"; then
+            busy=1
+            warn "Port $port is already in use by '$(port_owner "$port")'."
+        fi
+    done
+    if [[ $busy -eq 1 ]]; then
+        note "SwitchBoard needs these ports free. Stop the conflicting process, or change the"
+        note "port mappings in docker-compose.yml before continuing."
+        ask_yes_no "Continue anyway?" "n" || die "Free the ports listed above, then re-run ./setup.sh"
+    else
+        ok "All required ports are free"
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 2 — configure
+# ─────────────────────────────────────────────────────────────────────────────
+
+configure() {
+    step "Configuring secrets"
+
+    if [[ -f "$ENV_FILE" ]]; then
+        local backup="${ENV_FILE}.backup.$(date +%Y%m%d-%H%M%S)"
+        cp "$ENV_FILE" "$backup"
+        info "Found an existing $ENV_FILE — backed up to $(printf '%s%s%s' "$BOLD" "$backup" "$RESET")"
+    else
+        if [[ -f "$ENV_EXAMPLE" ]]; then
+            cp "$ENV_EXAMPLE" "$ENV_FILE"
+            ok "Created $ENV_FILE from $ENV_EXAMPLE"
+        else
+            : > "$ENV_FILE"
+            ok "Created an empty $ENV_FILE"
+        fi
+        chmod 600 "$ENV_FILE"
+    fi
+
+    # ── Encryption key ──────────────────────────────────────────────────────
+    # Mandatory: the gateway encrypts provider keys at rest with this.
+    local enc_key
+    enc_key="${ENCRYPTION_KEY:-$(read_env_value ENCRYPTION_KEY "$ENV_FILE")}"
+
+    if is_valid_fernet_key "$enc_key"; then
+        upsert_env ENCRYPTION_KEY "$enc_key" "$ENV_FILE"
+        ok "Encryption key already set — keeping it $(mask "$enc_key")"
+        note "Rotating it would make every API key already in the database unreadable."
+    else
+        [[ -n "$enc_key" ]] && warn "The existing ENCRYPTION_KEY isn't a valid Fernet key — generating a new one."
+        enc_key="$(generate_fernet_key)"
+        is_valid_fernet_key "$enc_key" || die \
+            "Could not generate an encryption key (no openssl, python3, or /dev/urandom)." \
+            "Install OpenSSL, or set ENCRYPTION_KEY yourself in $ENV_FILE"
+        upsert_env ENCRYPTION_KEY "$enc_key" "$ENV_FILE"
+        ok "Generated a fresh Fernet encryption key $(mask "$enc_key")"
+    fi
+
+    # ── Provider keys (all optional) ────────────────────────────────────────
+    printf '\n'
+    info "Provider API keys are ${BOLD}optional${RESET} — you can also add them later in the Admin UI."
+    printf '\n'
+
+    configure_provider_key GROQ_API_KEY      "Groq"      "console.groq.com/keys"               "serves chat completions"
+    configure_provider_key GOOGLE_API_KEY    "Google AI" "aistudio.google.com/app/apikey"      "embeddings for the semantic cache"
+    configure_provider_key ANTHROPIC_API_KEY "Anthropic" "console.anthropic.com/settings/keys"  "optional extra provider"
+
+    # Keep the default provider explicit so routing stays predictable.
+    [[ -n "$(read_env_value SWITCHBOARD_PROVIDER "$ENV_FILE")" ]] \
+        || upsert_env SWITCHBOARD_PROVIDER "groq" "$ENV_FILE"
+
+    chmod 600 "$ENV_FILE"
+    printf '\n'
+    ok "Wrote $(printf '%s%s%s' "$BOLD" "$ENV_FILE" "$RESET") $(printf '%s(mode 600 — it is gitignored, keep it that way)%s' "$GREY" "$RESET")"
+
+    mkdir -p data
+}
+
+# configure_provider_key <VAR> <label> <url> <purpose>
+configure_provider_key() {
+    local var="$1" label="$2" url="$3" purpose="$4"
+    local current value
+
+    # Precedence: exported env var > existing .env > prompt.
+    current="${!var:-}"
+    [[ -z "$current" ]] && current="$(read_env_value "$var" "$ENV_FILE")"
+
+    if [[ -n "$current" ]]; then
+        upsert_env "$var" "$current" "$ENV_FILE"
+        ok "$label key set $(mask "$current")"
+        return
+    fi
+
+    if ! interactive; then
+        note "$label key not set — add it later via the Admin UI."
+        return
+    fi
+
+    value="$(ask_secret "$label API key ${DIM}— ${purpose}${RESET}" "paste it, or press Enter to skip  ${BULLET}  ${url}")"
+    if [[ -z "$value" ]]; then
+        note "Skipped $label."
+        return
+    fi
+    if [[ "$var" == "GROQ_API_KEY" && "$value" != gsk_* ]]; then
+        warn "That doesn't look like a Groq key (they normally start with 'gsk_') — saving it anyway."
+    fi
+    upsert_env "$var" "$value" "$ENV_FILE"
+    ok "$label key saved $(mask "$value")"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 3 — launch
+# ─────────────────────────────────────────────────────────────────────────────
+
+launch() {
+    step "Building and starting containers"
+
+    SERVICES=(redis gateway admin-ui)
+    if [[ $MINIMAL -eq 1 ]]; then
+        info "Minimal mode — skipping Prometheus and Grafana."
+    else
+        SERVICES+=(prometheus grafana)
+    fi
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "--dry-run: not starting anything."
+        note "Would run: $COMPOSE up -d --build ${SERVICES[*]}"
+        return
+    fi
+
+    info "First run pulls base images and builds the gateway — this can take a few minutes."
+    printf '\n'
+
+    if [[ $REBUILD -eq 1 ]]; then
+        $COMPOSE build --no-cache "${SERVICES[@]}" || die \
+            "Image rebuild failed." "Scroll up for the build error, then re-run ./setup.sh"
+    fi
+
+    if ! $COMPOSE up -d --build "${SERVICES[@]}"; then
+        printf '\n'
+        fail "Docker Compose could not start the stack."
+        note "Recent gateway logs:"
+        $COMPOSE logs --tail 40 gateway 2>&1 | sed "s/^/    /" || true
+        die "The stack did not start." "Fix the error above, then re-run ./setup.sh"
+    fi
+
+    printf '\n'
+    ok "Containers started"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 4 — health
+# ─────────────────────────────────────────────────────────────────────────────
+
+# wait_for_http <url> <label> <timeout-seconds>
+wait_for_http() {
+    local url="$1" label="$2" timeout="$3"
+    local elapsed=0 frame=0 spinner
+
+    while [[ $elapsed -lt $timeout ]]; do
+        if curl -fsS -m 3 "$url" >/dev/null 2>&1; then
+            [[ -t 1 ]] && printf '\r\033[2K'
+            ok "$label is healthy $(printf '%s(%ss)%s' "$GREY" "$elapsed" "$RESET")"
+            return 0
+        fi
+
+        if [[ -t 1 ]]; then
+            spinner="${SPIN_FRAMES[$((frame % ${#SPIN_FRAMES[@]}))]}"
+            printf '\r  %s%s%s Waiting for %s… %s%ss/%ss%s' \
+                "$CYAN" "$spinner" "$RESET" "$label" "$GREY" "$elapsed" "$timeout" "$RESET"
+        fi
+        frame=$((frame + 1))
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    [[ -t 1 ]] && printf '\r\033[2K'
+    return 1
+}
+
+verify() {
+    step "Waiting for services to come up"
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "--dry-run: nothing to verify."
+        return
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "curl is unavailable — skipping health checks."
+        return
+    fi
+
+    if ! wait_for_http "$GATEWAY_URL/health" "Gateway" "$HEALTH_TIMEOUT"; then
+        fail "The gateway did not answer $GATEWAY_URL/health within ${HEALTH_TIMEOUT}s."
+        printf '\n'
+        note "Recent gateway logs:"
+        $COMPOSE logs --tail 40 gateway 2>&1 | sed "s/^/    /" || true
+        printf '\n'
+        note "Containers are still up, so you can keep digging:"
+        note "  $COMPOSE logs -f gateway"
+        note "  $COMPOSE ps"
+        die "The gateway is not healthy." "Check the logs above — a bad ENCRYPTION_KEY or a port clash is the usual cause."
+    fi
+
+    if $COMPOSE exec -T redis redis-cli ping 2>/dev/null | grep -q PONG; then
+        ok "Redis answered PONG"
+    else
+        warn "Redis did not answer PONG — the semantic cache may be degraded."
+    fi
+
+    wait_for_http "http://localhost:3000" "Admin UI" 30 \
+        || warn "Admin UI isn't responding on port 3000 yet — give it a moment."
+
+    if [[ $MINIMAL -eq 0 ]]; then
+        wait_for_http "http://localhost:9090/-/ready" "Prometheus" 30 || warn "Prometheus isn't ready yet."
+        wait_for_http "http://localhost:3001/api/health" "Grafana" 45 || warn "Grafana isn't ready yet (it boots slowest)."
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5 — summary
+# ─────────────────────────────────────────────────────────────────────────────
+
+# row <name> <url> <note>
+row() { printf '  %s%-14s%s %s%-30s%s %s%s%s\n' "$BOLD" "$1" "$RESET" "$CYAN" "$2" "$RESET" "$GREY" "$3" "$RESET"; }
+
+summary() {
+    step "You're ready"
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        printf '\n'
+        ok "Dry run complete — $ENV_FILE is configured and every check passed."
+        printf '\n  Start the stack with:\n\n    %s%s up -d --build%s\n\n' "$BOLD" "$COMPOSE" "$RESET"
+        return
+    fi
+
+    printf '\n'
+    row "Gateway API"  "$GATEWAY_URL"            "OpenAI-compatible endpoint"
+    row "API Docs"     "$GATEWAY_URL/docs"       "interactive Swagger UI"
+    row "Admin UI"     "http://localhost:3000"   "add keys, watch traffic"
+    if [[ $MINIMAL -eq 0 ]]; then
+        row "Prometheus" "http://localhost:9090"  "raw metrics"
+        row "Grafana"    "http://localhost:3001"  "dashboards — admin / switchboard"
+    fi
+
+    printf '\n  %sSend your first request:%s\n\n' "$BOLD" "$RESET"
+    printf '%s' "$GREY"
+    cat <<EOF
+    curl -s $GATEWAY_URL/v1/chat/completions \\
+      -H 'Content-Type: application/json' \\
+      -d '{"model":"llama-3.1-8b-instant","provider":"groq",
+           "messages":[{"role":"user","content":"Say hi in five words."}]}'
+EOF
+    printf '%s' "$RESET"
+
+    if [[ -z "$(read_env_value GROQ_API_KEY "$ENV_FILE")" ]]; then
+        printf '\n'
+        info "No Groq key configured yet — add one at ${BOLD}http://localhost:3000${RESET} before that first request."
+    fi
+
+    printf '\n  %sManage the stack:%s\n' "$BOLD" "$RESET"
+    note "$COMPOSE logs -f gateway    # follow gateway logs"
+    note "$COMPOSE ps                 # container status"
+    note "$COMPOSE stop               # pause everything"
+    note "$COMPOSE down               # stop and remove containers"
+    note "$COMPOSE down -v            # ...and wipe the database volume"
+
+    if [[ ${#WARNINGS[@]} -gt 0 ]]; then
+        printf '\n  %s%s %d warning(s) worth a look:%s\n' "$BOLD" "$WARN" "${#WARNINGS[@]}" "$RESET"
+        local w
+        for w in "${WARNINGS[@]}"; do printf '    %s%s%s %s\n' "$YELLOW" "$WARN" "$RESET" "$w"; done
+    fi
+
+    printf '\n%s%s SwitchBoard is live.%s %sHappy routing.%s\n\n' "$BOLD$GREEN" "$TICK" "$RESET" "$DIM" "$RESET"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+on_error() {
+    local code=$?
+    [[ $code -eq 0 ]] && return
+    printf '\n%s%s Unexpected failure%s (exit %d, line %s).\n' "$BOLD$RED" "$CROSS" "$RESET" "$code" "${BASH_LINENO[0]:-?}" >&2
+    printf '%sIf this looks like a bug, please open an issue with the output above.%s\n\n' "$GREY" "$RESET" >&2
+}
+
+main() {
+    parse_args "$@"
+    setup_colors
+    trap on_error EXIT
+    banner
+    preflight
+    configure
+    launch
+    verify
+    summary
+    trap - EXIT
+}
+
+main "$@"

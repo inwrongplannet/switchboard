@@ -1,5 +1,6 @@
 # Environments
 .env
+.env.backup.*
 .venv/
 venv/
 env/
@@ -40,6 +41,7 @@ skills-lock.json
 
 # Project specific
 .agents/
+AGENTS.md
 
 # Data directory (SQLite DB)
 data/
