@@ -86,6 +86,9 @@ Provider keys are optional at install time; you can add them any time from the A
 - **Google AI** — [aistudio.google.com](https://aistudio.google.com) (semantic-cache embeddings)
 - **Anthropic** — [console.anthropic.com](https://console.anthropic.com) (optional extra provider)
 
+Without `GOOGLE_API_KEY` the gateway still starts and serves requests — it just runs with
+the semantic cache disabled, and every response reports `X-Cache: MISS`.
+
 ---
 
 ## Quick Start (one command)
@@ -98,17 +101,43 @@ cd switchboard
 
 `setup.sh` verifies your Docker install, generates the Fernet `ENCRYPTION_KEY` for you,
 prompts for any provider keys you want to seed, writes `.env`, brings the stack up, and
-waits until every service reports healthy. It is safe to re-run — existing `.env` values
-are reused and the file is backed up before each write.
+waits until every service reports healthy.
 
-Useful flags:
+It is safe to re-run. Existing `.env` values are reused (never overwritten), and the file
+is backed up only when something actually changes.
 
-| Flag        | Effect                                                        |
-| ----------- | ------------------------------------------------------------- |
-| `--minimal` | Gateway + Redis + Admin UI only (skips Prometheus & Grafana)   |
-| `--yes`     | Non-interactive; reads keys from the environment or `.env`     |
-| `--rebuild` | Force a no-cache image rebuild                                |
-| `--dry-run` | Run all checks and write `.env`, but don't start containers    |
+| Flag                | Effect                                                       |
+| ------------------- | ------------------------------------------------------------ |
+| `--minimal`         | Gateway + Redis + Admin UI only (skips Prometheus & Grafana)  |
+| `--yes`             | Non-interactive; reads keys from the environment or `.env`    |
+| `--rebuild`         | Force a no-cache image rebuild                                |
+| `--dry-run`         | Run all checks and write `.env`, but don't start containers   |
+| `--keep-on-failure` | Leave containers running after a failure, for live debugging  |
+| `--no-color`        | Plain output, no ANSI escapes                                 |
+
+### Port conflicts
+
+If a port it needs is already taken, setup **remaps** rather than fighting for it. It never
+kills another process — including Docker itself, which owns every published port on macOS.
+
+```
+▲ Gateway port 8000 is in use by Python (pid 68964).
+▲ Gateway moved to port 8001 (saved in .env).
+```
+
+The chosen ports are written to `.env` as `GATEWAY_PORT`, `ADMIN_UI_PORT`, `REDIS_PORT`,
+`PROMETHEUS_PORT` and `GRAFANA_PORT`, and the summary prints the real URLs. They persist
+across runs so your URLs stay stable — edit `.env` to move a service back.
+
+Containers left behind by an earlier interrupted run are *ours*, so setup clears them
+automatically before starting (`docker compose down --remove-orphans`). Your database
+volume is never touched.
+
+### If setup fails
+
+Containers started by the run are rolled back automatically, so a failed install never
+leaves ports occupied. The full logs are written to `setup-failure-<timestamp>.log` first,
+so the cleanup doesn't cost you the evidence. Use `--keep-on-failure` to debug live instead.
 
 <details>
 <summary>Manual setup (without the script)</summary>
@@ -208,6 +237,15 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 | `X-Semantic-Similarity` | Cosine similarity score of the closest cached prompt |
 | `X-Provider`            | The provider that served the request                |
 | `X-Latency-Ms`          | Provider response time in milliseconds              |
+
+The cache matches on meaning, not on exact text. Asking the same thing a different way
+still hits:
+
+```text
+"Say hi in five words."     → X-Cache: MISS   X-Provider: groq   X-Latency-Ms: 424.0
+"Say hi in five words."     → X-Cache: HIT    X-Semantic-Similarity: 1.0000
+"Greet me using five words."→ X-Cache: HIT    X-Semantic-Similarity: 0.9144
+```
 
 ### Using the Python OpenAI Client
 
@@ -349,8 +387,21 @@ switchboard/
 | `SWITCHBOARD_PROVIDER` | No  | `"groq"`                  | Default provider when request omits `provider`    |
 | `REDIS_URL`       | No       | `redis://localhost:6379/0` | Redis connection URL                              |
 | `SQLITE_DB_PATH`  | No       | `data/switchboard.db`      | Path to the SQLite database file                  |
-| `PORT`            | No       | `8000`                     | Gateway listen port                               |
+| `PORT`            | No       | `8000`                     | Gateway listen port *inside* the container        |
 | `HOST`            | No       | `0.0.0.0`                  | Gateway bind address                              |
+
+### Host port mappings
+
+These control the ports published on your machine by Docker Compose. `setup.sh` sets them
+automatically, remapping any that are already in use; set them yourself to pin a service.
+
+| Variable           | Default | Service    |
+| ------------------ | ------- | ---------- |
+| `GATEWAY_PORT`     | `8000`  | Gateway    |
+| `ADMIN_UI_PORT`    | `3000`  | Admin UI   |
+| `REDIS_PORT`       | `6379`  | Redis      |
+| `PROMETHEUS_PORT`  | `9090`  | Prometheus |
+| `GRAFANA_PORT`     | `3001`  | Grafana    |
 
 ---
 

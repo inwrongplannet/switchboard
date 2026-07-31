@@ -1,6 +1,7 @@
 # Environments
 .env
 .env.backup.*
+.env.snapshot.*
 .venv/
 venv/
 env/
@@ -46,3 +47,6 @@ AGENTS.md
 # Data directory (SQLite DB)
 data/
 *.db
+
+# setup.sh failure logs
+setup-failure-*.log

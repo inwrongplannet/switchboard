@@ -2,7 +2,7 @@ services:
   gateway:
     build: .
     ports:
-      - "8000:8000"
+      - "${GATEWAY_PORT:-8000}:8000"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
@@ -20,12 +20,12 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
 
   admin-ui:
     build: ./vis
     ports:
-      - "3000:3000"
+      - "${ADMIN_UI_PORT:-3000}:3000"
     environment:
       - API_URL=http://gateway:8000
     depends_on:
@@ -34,7 +34,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
@@ -43,7 +43,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3001:3000"
+      - "${GRAFANA_PORT:-3001}:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=switchboard

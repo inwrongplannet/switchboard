@@ -15,14 +15,24 @@ class RedisCache:
         # Default TTL of 1 hour for MVP
         self.ttl = 3600
         
-        # Initialize Google GenAI client for embeddings
-        self.genai_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        # Initialize Google GenAI client for embeddings.
+        # Without a key, genai.Client() raises on construction — and since this runs at
+        # import time it would take the whole gateway down. Semantic caching is optional,
+        # so degrade to "no cache" and keep serving requests instead.
+        if settings.GOOGLE_API_KEY:
+            self.genai_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        else:
+            self.genai_client = None
+            print("GOOGLE_API_KEY is not set; semantic cache disabled (requests still served).")
         self.embedding_model = "gemini-embedding-001"
 # Increased threshold to 0.9 to avoid false positive matches between distinct semantic statements
         self.similarity_threshold = 0.9
 
     def _get_embedding(self, text: str) -> np.ndarray:
         """Helper to generate an embedding for the given text using Gemini."""
+        # Callers already treat None as "skip the cache" on both the read and write paths.
+        if self.genai_client is None:
+            return None
         try:
             result = self.genai_client.models.embed_content(
                 model=self.embedding_model,

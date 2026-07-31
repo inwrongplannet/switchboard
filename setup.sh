@@ -14,8 +14,23 @@ cd "$SCRIPT_DIR"
 
 readonly ENV_FILE=".env"
 readonly ENV_EXAMPLE=".env.example"
-readonly GATEWAY_URL="http://localhost:8000"
 readonly HEALTH_TIMEOUT=150   # seconds to wait for the gateway to answer /health
+
+# Host ports, as "ENV_VAR:default:label". Each is overridable in .env, so a busy
+# port is remapped rather than fought over. Container-internal ports never change.
+PORT_SPECS=(
+    "GATEWAY_PORT:8000:Gateway"
+    "ADMIN_UI_PORT:3000:Admin UI"
+    "REDIS_PORT:6379:Redis"
+    "PROMETHEUS_PORT:9090:Prometheus"
+    "GRAFANA_PORT:3001:Grafana"
+)
+# Deliberately NOT pre-initialised: resolve_ports reads each name with ${!var:-},
+# so assigning defaults here would shadow both an exported override and the value
+# saved in .env, and the script would silently ignore the user's chosen port.
+CHOSEN_PORTS=""
+GATEWAY_URL="http://localhost:8000"
+ENV_SNAPSHOT=""
 
 # Flags
 ASSUME_YES=0
@@ -23,11 +38,13 @@ MINIMAL=0
 REBUILD=0
 DRY_RUN=0
 USE_COLOR=1
+KEEP_ON_FAILURE=0
 
 # Runtime state
 COMPOSE=""
 STEP=0
 TOTAL_STEPS=5
+LAUNCHED=0        # set once we've asked Compose to start containers
 SERVICES=()
 WARNINGS=()
 
@@ -93,9 +110,57 @@ note()    { printf '    %s%s%s\n' "$GREY" "$1" "$RESET"; }
 warn()    { printf '  %s%s%s %s\n' "$YELLOW" "$WARN" "$RESET" "$1"; WARNINGS+=("$1"); }
 fail()    { printf '  %s%s%s %s\n' "$RED" "$CROSS" "$RESET" "$1" >&2; }
 
+# Leave no scratch files behind, however we exit.
+cleanup_temp() {
+    [[ -n "${ENV_SNAPSHOT:-}" && -f "${ENV_SNAPSHOT:-}" ]] && rm -f "$ENV_SNAPSHOT"
+    return 0
+}
+
+# Undo a failed launch. Anything running at this point was started by *this* run —
+# preflight already cleared any pre-existing stack — so tearing it down is safe and
+# never touches containers we didn't create. Logs are kept so the rollback doesn't
+# cost you the evidence.
+cleanup_failed_launch() {
+    [[ $LAUNCHED -eq 1 ]] || return 0
+    [[ $DRY_RUN -eq 1 ]] && return 0
+    LAUNCHED=0   # never run twice
+
+    if [[ $KEEP_ON_FAILURE -eq 1 ]]; then
+        printf '  %s%s%s Containers left running (--keep-on-failure). Inspect with:\n' "$CYAN" "$BULLET" "$RESET"
+        printf '    %s%s logs -f gateway%s\n' "$GREY" "$COMPOSE" "$RESET"
+        return 0
+    fi
+
+    local logfile="setup-failure-$(date +%Y%m%d-%H%M%S).log"
+    $COMPOSE logs --no-color > "$logfile" 2>&1 || true
+
+    # A single `down` can lose a race: if an interrupted `up` is still mid-flight it
+    # keeps creating containers behind us. Tear down until nothing is left.
+    local attempt=0
+    while [[ $attempt -lt 3 ]]; do
+        $COMPOSE down --remove-orphans >/dev/null 2>&1 || true
+        [[ -z "$($COMPOSE ps -aq 2>/dev/null || true)" ]] && break
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+
+    if [[ -z "$($COMPOSE ps -aq 2>/dev/null || true)" ]]; then
+        printf '  %s%s%s Rolled back — every container this run started has been removed.\n' "$CYAN" "$BULLET" "$RESET"
+        printf '    %sFull logs saved to %s%s%s\n' "$GREY" "$BOLD" "$logfile" "$RESET"
+        printf '    %sKeep them running next time with: ./setup.sh --keep-on-failure%s\n' "$GREY" "$RESET"
+    else
+        printf '  %s%s%s Rollback was incomplete — clean up manually with: %s%s down%s\n' \
+            "$YELLOW" "$WARN" "$RESET" "$BOLD" "$COMPOSE" "$RESET"
+    fi
+}
+
 die() {
+    cleanup_failed_launch
     printf '\n%s%s Setup stopped.%s %s\n\n' "$BOLD$RED" "$CROSS" "$RESET" "$1" >&2
     [[ $# -gt 1 ]] && printf '%sFix:%s %s\n\n' "$BOLD" "$RESET" "$2" >&2
+    cleanup_temp
+    # This is a handled, explained exit — don't let the crash handler fire on top of it.
+    trap - EXIT
     exit 1
 }
 
@@ -120,6 +185,11 @@ ${BOLD}OPTIONS${RESET}
       --no-color   Plain output, no ANSI escapes.
   -h, --help       Show this help.
 
+${BOLD}ON FAILURE${RESET}
+  ${DIM}If setup fails, containers it started are rolled back automatically and the
+  full logs are written to ./setup-failure-<timestamp>.log. Pass${RESET}
+  --keep-on-failure ${DIM}to leave them running and debug live instead.${RESET}
+
 ${BOLD}ENVIRONMENT${RESET}
   ${DIM}Pre-set any of these to skip its prompt (useful with --yes / in CI):${RESET}
   GROQ_API_KEY   GOOGLE_API_KEY   ANTHROPIC_API_KEY   ENCRYPTION_KEY
@@ -138,6 +208,7 @@ parse_args() {
             --minimal)   MINIMAL=1 ;;
             --rebuild)   REBUILD=1 ;;
             --dry-run)   DRY_RUN=1 ;;
+            --keep-on-failure) KEEP_ON_FAILURE=1 ;;
             --no-color)  USE_COLOR=0 ;;
             -h|--help)   setup_colors; usage; exit 0 ;;
             *)           setup_colors; fail "Unknown option: $1"; printf '\n'; usage; exit 2 ;;
@@ -254,10 +325,134 @@ port_in_use() {
     fi
 }
 
-port_owner() {
-    local port="$1"
-    command -v lsof >/dev/null 2>&1 || { printf 'another process'; return; }
-    lsof -nP -iTCP:"$port" -sTCP:LISTEN -F c 2>/dev/null | sed -n 's/^c//p' | head -1
+# Describe what is holding a port, in terms a human can act on.
+# Docker-published ports are held by the Docker daemon itself, so lsof alone
+# would just say "com.docker.backend" — ask Docker which container it is first.
+port_holder_desc() {
+    local port="$1" cname proj pname pid
+
+    cname="$(docker ps --filter "publish=$port" --format '{{.Names}}' 2>/dev/null | head -1)"
+    if [[ -n "$cname" ]]; then
+        proj="$(docker inspect "$cname" --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+        if [[ -n "$proj" ]]; then
+            printf 'container %s (compose project "%s")' "$cname" "$proj"
+        else
+            printf 'container %s' "$cname"
+        fi
+        return
+    fi
+
+    if command -v lsof >/dev/null 2>&1; then
+        pname="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -F c 2>/dev/null | sed -n 's/^c//p' | head -1)"
+        pid="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -F p 2>/dev/null | sed -n 's/^p//p' | head -1)"
+        if [[ -n "$pname" ]]; then
+            printf '%s (pid %s)' "$pname" "$pid"
+            return
+        fi
+    fi
+    printf 'an unidentified process'
+}
+
+port_already_claimed() {
+    case " $CHOSEN_PORTS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# Is $1 the default port of some *other* service? Remapping onto a sibling's
+# default just pushes the collision down the line (admin-ui onto Grafana's 3001,
+# and so on), so those stay off-limits.
+is_other_service_default() {
+    local candidate="$1" own_var="$2" spec var rest default
+    for spec in "${PORT_SPECS[@]}"; do
+        var="${spec%%:*}"; rest="${spec#*:}"; default="${rest%%:*}"
+        [[ "$var" == "$own_var" ]] && continue
+        [[ "$candidate" == "$default" ]] && return 0
+    done
+    return 1
+}
+
+# First usable port at or after $1, for the service owning $2.
+find_free_port() {
+    local candidate="$1" own_var="$2" limit=$(( $1 + 60 ))
+    while [[ $candidate -lt $limit ]]; do
+        if ! port_in_use "$candidate" \
+            && ! port_already_claimed "$candidate" \
+            && ! is_other_service_default "$candidate" "$own_var"; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+        candidate=$((candidate + 1))
+    done
+    return 1
+}
+
+# Containers left over from an interrupted or partially-failed run keep holding
+# their ports. They're ours, so clear them out — but never touch anything else.
+# `down` without -v leaves the switchboard-data volume (and your database) intact.
+reclaim_previous_stack() {
+    local existing
+    existing="$($COMPOSE ps -aq 2>/dev/null || true)"
+    [[ -z "$existing" ]] && return 0
+
+    info "Containers from a previous run are present — clearing them so ports are released."
+    note "Your data volume (switchboard-data) is left untouched."
+    if $COMPOSE down --remove-orphans >/dev/null 2>&1; then
+        ok "Previous stack cleared"
+    else
+        warn "Could not fully stop the previous stack — a port may still be held."
+    fi
+}
+
+# Decide the host port for every service: keep the preferred one when it's free,
+# otherwise remap. Nothing is ever killed.
+resolve_ports() {
+    local spec var rest default label desired chosen holder
+
+    for spec in "${PORT_SPECS[@]}"; do
+        var="${spec%%:*}"; rest="${spec#*:}"; default="${rest%%:*}"; label="${rest#*:}"
+
+        # Skip services this run won't start.
+        if [[ $MINIMAL -eq 1 ]] && { [[ "$var" == "PROMETHEUS_PORT" ]] || [[ "$var" == "GRAFANA_PORT" ]]; }; then
+            continue
+        fi
+
+        # Preference order: exported env var > a port already saved in .env > default.
+        desired="${!var:-}"
+        [[ -z "$desired" ]] && desired="$(read_env_value "$var" "$ENV_FILE")"
+        [[ -z "$desired" ]] && desired="$default"
+
+        if ! port_in_use "$desired" && ! port_already_claimed "$desired"; then
+            chosen="$desired"
+        else
+            if port_in_use "$desired"; then
+                holder="$(port_holder_desc "$desired")"
+            else
+                holder="another SwitchBoard service"
+            fi
+            chosen="$(find_free_port $((desired + 1)) "$var")" || die \
+                "Port $desired is taken by $holder, and no free port was found near it." \
+                "Free the port, or set $var=<port> in $ENV_FILE yourself."
+
+            printf '  %s%s%s %s port %s is in use by %s%s%s.\n' \
+                "$YELLOW" "$WARN" "$RESET" "$label" "$desired" "$BOLD" "$holder" "$RESET"
+
+            if interactive; then
+                if ask_yes_no "Use port $chosen for $label instead?" "y"; then
+                    WARNINGS+=("$label moved from port $desired to $chosen (saved in $ENV_FILE).")
+                else
+                    die "$label cannot bind port $desired." \
+                        "Stop whatever is using that port, or set $var=<port> in $ENV_FILE. This script will not kill other processes for you."
+                fi
+            else
+                warn "$label moved to port $chosen (saved in $ENV_FILE)."
+            fi
+        fi
+
+        printf -v "$var" '%s' "$chosen"
+        CHOSEN_PORTS="$CHOSEN_PORTS $chosen"
+        upsert_env "$var" "$chosen" "$ENV_FILE"
+    done
+
+    GATEWAY_URL="http://localhost:${GATEWAY_PORT}"
 }
 
 preflight() {
@@ -294,30 +489,9 @@ preflight() {
     command -v curl >/dev/null 2>&1 || warn "curl not found — health checks will be skipped."
     [[ -f "$ENV_EXAMPLE" ]] || warn "$ENV_EXAMPLE is missing — a fresh $ENV_FILE will be created from scratch."
 
-    # Ports — only meaningful if our own stack isn't already holding them.
-    local ours=""
-    ours="$($COMPOSE ps -q 2>/dev/null || true)"
-    if [[ -n "$ours" ]]; then
-        info "An existing SwitchBoard stack is running — it will be updated in place."
-        return
-    fi
-
-    local ports=(8000 3000 6379)
-    [[ $MINIMAL -eq 0 ]] && ports+=(9090 3001)
-    local port busy=0
-    for port in "${ports[@]}"; do
-        if port_in_use "$port"; then
-            busy=1
-            warn "Port $port is already in use by '$(port_owner "$port")'."
-        fi
-    done
-    if [[ $busy -eq 1 ]]; then
-        note "SwitchBoard needs these ports free. Stop the conflicting process, or change the"
-        note "port mappings in docker-compose.yml before continuing."
-        ask_yes_no "Continue anyway?" "n" || die "Free the ports listed above, then re-run ./setup.sh"
-    else
-        ok "All required ports are free"
-    fi
+    # Do this before any port check: our own leftovers are the most common squatter,
+    # and clearing them first makes the check below meaningful.
+    reclaim_previous_stack
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -325,12 +499,15 @@ preflight() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 configure() {
-    step "Configuring secrets"
+    step "Configuring environment"
 
+    # Snapshot first, compare later: a run that changes nothing shouldn't litter
+    # the repo with identical backups.
+    ENV_SNAPSHOT=""
     if [[ -f "$ENV_FILE" ]]; then
-        local backup="${ENV_FILE}.backup.$(date +%Y%m%d-%H%M%S)"
-        cp "$ENV_FILE" "$backup"
-        info "Found an existing $ENV_FILE — backed up to $(printf '%s%s%s' "$BOLD" "$backup" "$RESET")"
+        ENV_SNAPSHOT="$(mktemp "${ENV_FILE}.snapshot.XXXXXX")"
+        cp "$ENV_FILE" "$ENV_SNAPSHOT"
+        info "Found an existing $ENV_FILE — reusing the values in it"
     else
         if [[ -f "$ENV_EXAMPLE" ]]; then
             cp "$ENV_EXAMPLE" "$ENV_FILE"
@@ -374,9 +551,27 @@ configure() {
     [[ -n "$(read_env_value SWITCHBOARD_PROVIDER "$ENV_FILE")" ]] \
         || upsert_env SWITCHBOARD_PROVIDER "groq" "$ENV_FILE"
 
-    chmod 600 "$ENV_FILE"
     printf '\n'
-    ok "Wrote $(printf '%s%s%s' "$BOLD" "$ENV_FILE" "$RESET") $(printf '%s(mode 600 — it is gitignored, keep it that way)%s' "$GREY" "$RESET")"
+    resolve_ports
+    ok "Host ports settled $(printf '%sgateway %s %s admin %s %s redis %s%s' \
+        "$GREY" "$GATEWAY_PORT" "$BULLET" "$ADMIN_UI_PORT" "$BULLET" "$REDIS_PORT" "$RESET")"
+
+    chmod 600 "$ENV_FILE"
+
+    # Only keep a backup if this run actually changed something.
+    if [[ -n "$ENV_SNAPSHOT" ]]; then
+        if cmp -s "$ENV_SNAPSHOT" "$ENV_FILE"; then
+            rm -f "$ENV_SNAPSHOT"
+            ok "$ENV_FILE unchanged $(printf '%s(no backup needed)%s' "$GREY" "$RESET")"
+        else
+            local backup="${ENV_FILE}.backup.$(date +%Y%m%d-%H%M%S)"
+            mv "$ENV_SNAPSHOT" "$backup"
+            chmod 600 "$backup"
+            ok "Updated $ENV_FILE $(printf '%s(previous version saved as %s)%s' "$GREY" "$backup" "$RESET")"
+        fi
+    else
+        ok "Wrote $(printf '%s%s%s' "$BOLD" "$ENV_FILE" "$RESET") $(printf '%s(mode 600 — gitignored, keep it that way)%s' "$GREY" "$RESET")"
+    fi
 
     mkdir -p data
 }
@@ -441,11 +636,15 @@ launch() {
             "Image rebuild failed." "Scroll up for the build error, then re-run ./setup.sh"
     fi
 
+    # From here on, containers may exist — anything that goes wrong must roll them back.
+    LAUNCHED=1
+
     if ! $COMPOSE up -d --build "${SERVICES[@]}"; then
         printf '\n'
         fail "Docker Compose could not start the stack."
         note "Recent gateway logs:"
         $COMPOSE logs --tail 40 gateway 2>&1 | sed "s/^/    /" || true
+        printf '\n'
         die "The stack did not start." "Fix the error above, then re-run ./setup.sh"
     fi
 
@@ -502,9 +701,6 @@ verify() {
         note "Recent gateway logs:"
         $COMPOSE logs --tail 40 gateway 2>&1 | sed "s/^/    /" || true
         printf '\n'
-        note "Containers are still up, so you can keep digging:"
-        note "  $COMPOSE logs -f gateway"
-        note "  $COMPOSE ps"
         die "The gateway is not healthy." "Check the logs above — a bad ENCRYPTION_KEY or a port clash is the usual cause."
     fi
 
@@ -514,12 +710,12 @@ verify() {
         warn "Redis did not answer PONG — the semantic cache may be degraded."
     fi
 
-    wait_for_http "http://localhost:3000" "Admin UI" 30 \
-        || warn "Admin UI isn't responding on port 3000 yet — give it a moment."
+    wait_for_http "http://localhost:${ADMIN_UI_PORT}" "Admin UI" 30 \
+        || warn "Admin UI isn't responding on port ${ADMIN_UI_PORT} yet — give it a moment."
 
     if [[ $MINIMAL -eq 0 ]]; then
-        wait_for_http "http://localhost:9090/-/ready" "Prometheus" 30 || warn "Prometheus isn't ready yet."
-        wait_for_http "http://localhost:3001/api/health" "Grafana" 45 || warn "Grafana isn't ready yet (it boots slowest)."
+        wait_for_http "http://localhost:${PROMETHEUS_PORT}/-/ready" "Prometheus" 30 || warn "Prometheus isn't ready yet."
+        wait_for_http "http://localhost:${GRAFANA_PORT}/api/health" "Grafana" 45 || warn "Grafana isn't ready yet (it boots slowest)."
     fi
 }
 
@@ -541,12 +737,12 @@ summary() {
     fi
 
     printf '\n'
-    row "Gateway API"  "$GATEWAY_URL"            "OpenAI-compatible endpoint"
-    row "API Docs"     "$GATEWAY_URL/docs"       "interactive Swagger UI"
-    row "Admin UI"     "http://localhost:3000"   "add keys, watch traffic"
+    row "Gateway API"  "$GATEWAY_URL"                          "OpenAI-compatible endpoint"
+    row "API Docs"     "$GATEWAY_URL/docs"                     "interactive Swagger UI"
+    row "Admin UI"     "http://localhost:${ADMIN_UI_PORT}"     "add keys, watch traffic"
     if [[ $MINIMAL -eq 0 ]]; then
-        row "Prometheus" "http://localhost:9090"  "raw metrics"
-        row "Grafana"    "http://localhost:3001"  "dashboards — admin / switchboard"
+        row "Prometheus" "http://localhost:${PROMETHEUS_PORT}" "raw metrics"
+        row "Grafana"    "http://localhost:${GRAFANA_PORT}"    "dashboards — admin / switchboard"
     fi
 
     printf '\n  %sSend your first request:%s\n\n' "$BOLD" "$RESET"
@@ -561,7 +757,7 @@ EOF
 
     if [[ -z "$(read_env_value GROQ_API_KEY "$ENV_FILE")" ]]; then
         printf '\n'
-        info "No Groq key configured yet — add one at ${BOLD}http://localhost:3000${RESET} before that first request."
+        info "No Groq key configured yet — add one at ${BOLD}http://localhost:${ADMIN_UI_PORT}${RESET} before that first request."
     fi
 
     printf '\n  %sManage the stack:%s\n' "$BOLD" "$RESET"
@@ -584,15 +780,33 @@ EOF
 
 on_error() {
     local code=$?
-    [[ $code -eq 0 ]] && return
+    [[ $code -eq 0 ]] && { cleanup_temp; return; }
     printf '\n%s%s Unexpected failure%s (exit %d, line %s).\n' "$BOLD$RED" "$CROSS" "$RESET" "$code" "${BASH_LINENO[0]:-?}" >&2
+    cleanup_failed_launch
+    cleanup_temp
     printf '%sIf this looks like a bug, please open an issue with the output above.%s\n\n' "$GREY" "$RESET" >&2
+}
+
+# Ctrl-C mid-build leaves half a stack behind too — roll that back as well.
+on_interrupt() {
+    printf '\n\n%s%s Interrupted.%s\n' "$BOLD$YELLOW" "$WARN" "$RESET" >&2
+    # Stop any in-flight `compose up` first — otherwise it keeps starting containers
+    # while we're tearing them down, and survivors are left behind.
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -P $$ >/dev/null 2>&1 || true
+        sleep 1
+    fi
+    cleanup_failed_launch
+    cleanup_temp
+    trap - EXIT
+    exit 130
 }
 
 main() {
     parse_args "$@"
     setup_colors
     trap on_error EXIT
+    trap on_interrupt INT TERM
     banner
     preflight
     configure
