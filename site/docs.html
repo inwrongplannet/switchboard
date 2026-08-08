@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — SwitchBoard</title>
+<meta name="description" content="Install, configure and operate SwitchBoard: quickstart, environment variables, semantic cache tuning, key rotation, the admin API, and Prometheus + Grafana observability.">
+<meta name="color-scheme" content="light dark">
+<!-- Applied before first paint so a stored preference never flashes the
+     other theme. Must stay inline and stay above the stylesheet. -->
+<script>(function(){try{var t=localStorage.getItem('sb-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/switchboard.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%232b2620'/><circle cx='11' cy='11' r='3.4' fill='none' stroke='%23e0ac1f' stroke-width='2'/><circle cx='21' cy='21' r='3.4' fill='none' stroke='%23cfae52' stroke-width='2'/><path d='M11 15 C 11 22, 21 14, 21 17' fill='none' stroke='%23cf8442' stroke-width='2'/></svg>">
+</head>
+<body>
+<a class="skip" href="#overview">Skip to content</a>
+
+<!-- ============================= NAV ============================= -->
+<header class="nav">
+  <div class="wrap nav__in">
+    <a class="brand" href="index.html">
+      <svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="6" fill="none" stroke="currentColor" opacity=".35"/>
+        <circle cx="11" cy="11" r="3.6" fill="none" stroke="var(--accent)" stroke-width="2"/>
+        <circle cx="21" cy="21" r="3.6" fill="none" stroke="var(--brass)" stroke-width="2"/>
+        <path d="M11 15.2 C 11 23, 21 14, 21 17.2" fill="none" stroke="var(--copper)" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      SwitchBoard <span class="v">v0.2.0</span>
+    </a>
+    <nav class="nav__links" id="nav-links" aria-label="Primary">
+      <a href="index.html#problem">Why</a>
+      <a href="index.html#features">Features</a>
+      <a href="index.html#architecture">Architecture</a>
+      <a href="docs.html" aria-current="page">Docs</a>
+      <a href="https://github.com/sankalp-happy/switchboard">GitHub&nbsp;↗</a>
+    </nav>
+    <div class="nav__end">
+      <button class="themesw" type="button" aria-label="Switch theme">
+        <span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></span>
+        <span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke-linecap="round"/></svg></span>
+      </button>
+      <button class="nav__toggle" id="nav-toggle" aria-expanded="false" aria-controls="nav-links">Menu</button>
+    </div>
+  </div>
+</header>
+
+<!-- ============================= DOC HERO ============================= -->
+<div class="doc-hero">
+  <div class="wrap">
+    <div class="srail">
+      <span class="srail__n">Operator's manual</span>
+      <i class="srail__r" aria-hidden="true"></i>
+      <span class="srail__d">13 sections · v0.2.0</span>
+    </div>
+    <h1>Documentation</h1>
+    <p class="lede">
+      Everything below is taken from the repository as it stands at
+      <span class="inline">v0.2.0</span> — commands from <span class="inline">setup.sh</span>,
+      variables from <span class="inline">.env.example</span>, metrics from
+      <span class="inline">core/metrics.py</span>. Where a value is hardcoded rather than
+      configurable, the file to edit is named.
+    </p>
+  </div>
+</div>
+
+<div class="wrap docs">
+
+  <!-- ============================= RAIL ============================= -->
+  <aside class="rail" aria-label="Table of contents">
+    <div class="rail__t">Contents</div>
+    <ol>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#prerequisites">Prerequisites</a></li>
+      <li><a href="#quickstart">Quickstart</a></li>
+      <li><a href="#manual">Manual setup</a></li>
+      <li><a href="#local">Local development</a></li>
+      <li><a href="#usage">Usage</a></li>
+      <li><a href="#configuration">Configuration</a></li>
+      <li><a href="#admin">Admin API</a></li>
+      <li><a href="#observability">Observability</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#testing">Testing</a></li>
+      <li><a href="#structure">Project structure</a></li>
+      <li><a href="#limits">Limitations</a></li>
+    </ol>
+  </aside>
+
+  <!-- ============================= DOC BODY ============================= -->
+  <main class="doc">
+
+    <!-- OVERVIEW -->
+    <section id="overview">
+      <h2>Overview</h2>
+      <p>
+        SwitchBoard is a self-hosted gateway that sits between your application and upstream LLM
+        providers. It exposes a single OpenAI-compatible endpoint,
+        <span class="inline">POST /v1/chat/completions</span>, and does three jobs behind it:
+      </p>
+      <ul>
+        <li><b>Semantic caching.</b> Prompts are embedded and matched against previous requests by cosine similarity, so a rephrased question is answered from Redis instead of the provider.</li>
+        <li><b>Multi-key routing.</b> Any number of API keys can be registered per provider. The router picks the key with the most remaining quota and fails over automatically on rate limits and auth errors.</li>
+        <li><b>Observability.</b> Cache hit rate, provider latency quantiles, key rotations and token throughput are exported to Prometheus and rendered by a Grafana dashboard that provisions itself.</li>
+      </ul>
+      <p>
+        Supported providers are <span class="inline">groq</span>,
+        <span class="inline">google</span> and <span class="inline">anthropic</span>. There is no
+        hosted version — you run the whole stack yourself from one Compose file.
+      </p>
+      <div class="note">
+        <b>Version note —</b> the gateway reports <span class="inline">0.2.0</span> from
+        <span class="inline">/health</span>. This documentation describes that build.
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- PREREQUISITES -->
+    <section id="prerequisites">
+      <h2>Prerequisites</h2>
+      <ul>
+        <li><b>Docker</b> and <b>Docker Compose v2</b> — the only requirement for the quickstart below.</li>
+        <li><b>Python 3.11+</b> — only if you intend to run the gateway outside Docker.</li>
+      </ul>
+
+      <h3>Provider keys</h3>
+      <p>
+        All provider keys are optional at install time; you can add them later from the control
+        panel or the admin API without restarting anything.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Key</th><th scope="col">Used for</th><th scope="col">Obtain from</th></tr></thead>
+          <tbody>
+            <tr><td>Groq</td><td>Chat completions</td><td><a href="https://console.groq.com">console.groq.com</a></td></tr>
+            <tr><td>Google AI</td><td>Chat completions <em>and</em> semantic-cache embeddings</td><td><a href="https://aistudio.google.com">aistudio.google.com</a></td></tr>
+            <tr><td>Anthropic</td><td>Chat completions</td><td><a href="https://console.anthropic.com">console.anthropic.com</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <b>Without <code>GOOGLE_API_KEY</code></b> the gateway still starts and serves requests — it
+        simply runs with the semantic cache disabled and every response reports
+        <span class="inline">X-Cache: MISS</span>. The embedding client is the only thing that needs it.
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- QUICKSTART -->
+    <section id="quickstart">
+      <h2>Quickstart</h2>
+      <p>Three commands, and the script handles the rest.</p>
+
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">git</span> clone https://github.com/sankalp-happy/switchboard.git
+<span class="t-cmd">cd</span> switchboard
+<span class="t-cmd">./setup.sh</span></code></pre>
+      </div>
+
+      <p><span class="inline">setup.sh</span> will:</p>
+      <ol class="plain">
+        <li>Verify your Docker and Compose v2 installation.</li>
+        <li>Generate the Fernet <span class="inline">ENCRYPTION_KEY</span> for you.</li>
+        <li>Prompt for any provider keys you want to seed.</li>
+        <li>Write <span class="inline">.env</span>, remapping any host port that is already occupied.</li>
+        <li>Bring the stack up and wait until every service reports healthy.</li>
+      </ol>
+      <p>
+        It is safe to re-run. Existing <span class="inline">.env</span> values are reused and never
+        overwritten, and the file is backed up only when something actually changes.
+      </p>
+
+      <h3 id="flags">Flags</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Flag</th><th scope="col">Effect</th></tr></thead>
+          <tbody>
+            <tr><td><code>-y</code>, <code>--yes</code></td><td>Non-interactive. Reuse <code>.env</code> / environment values and prompt for nothing.</td></tr>
+            <tr><td><code>--minimal</code></td><td>Gateway + Redis + Admin UI only; skips Prometheus and Grafana.</td></tr>
+            <tr><td><code>--rebuild</code></td><td>Force a clean image rebuild with no layer cache.</td></tr>
+            <tr><td><code>--dry-run</code></td><td>Run every check and write <code>.env</code>, but don't start containers.</td></tr>
+            <tr><td><code>--keep-on-failure</code></td><td>Leave containers running after a failure so you can debug live.</td></tr>
+            <tr><td><code>--no-color</code></td><td>Plain output, no ANSI escapes.</td></tr>
+            <tr><td><code>-h</code>, <code>--help</code></td><td>Show all options.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-com"># lighter stack, no metrics UI</span>
+<span class="t-cmd">./setup.sh</span> --minimal
+
+<span class="t-com"># unattended, seeding a key from the environment</span>
+GROQ_API_KEY=gsk_... <span class="t-cmd">./setup.sh</span> --yes</code></pre>
+      </div>
+
+      <h3 id="ports">Port conflicts</h3>
+      <p>
+        If a port the stack needs is already taken, setup <b>remaps</b> the service rather than
+        fighting for the port. It never kills another process — including Docker itself, which owns
+        every published port on macOS.
+      </p>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">output</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code>▲ Gateway port 8000 is in use by Python (pid 68964).
+▲ Gateway moved to port 8001 (saved in .env).</code></pre>
+      </div>
+      <p>
+        The chosen ports are written to <span class="inline">.env</span> as
+        <span class="inline">GATEWAY_PORT</span>, <span class="inline">ADMIN_UI_PORT</span>,
+        <span class="inline">REDIS_PORT</span>, <span class="inline">PROMETHEUS_PORT</span> and
+        <span class="inline">GRAFANA_PORT</span>, and the summary prints the real URLs. They persist
+        across runs, so your URLs stay stable — edit <span class="inline">.env</span> to move a
+        service back.
+      </p>
+      <p>
+        Containers left behind by an interrupted run belong to SwitchBoard, so setup clears them
+        with <span class="inline">docker compose down --remove-orphans</span> before starting. Your
+        database volume is never touched.
+      </p>
+
+      <h3 id="failure">If setup fails</h3>
+      <p>
+        Containers started by the run are rolled back automatically, so a failed install never
+        leaves ports occupied. Full logs are written to
+        <span class="inline">setup-failure-&lt;timestamp&gt;.log</span> <em>first</em>, so the cleanup
+        doesn't cost you the evidence. Use <span class="inline">--keep-on-failure</span> to debug live
+        instead.
+      </p>
+
+      <h3 id="verify">Verify</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Service</th><th scope="col">Default URL</th></tr></thead>
+          <tbody>
+            <tr><td>Gateway API</td><td><code>http://localhost:8000</code></td></tr>
+            <tr><td>Health check</td><td><code>http://localhost:8000/health</code></td></tr>
+            <tr><td>API docs (Swagger)</td><td><code>http://localhost:8000/docs</code></td></tr>
+            <tr><td>Control panel</td><td><code>http://localhost:3000</code></td></tr>
+            <tr><td>Prometheus</td><td><code>http://localhost:9090</code></td></tr>
+            <tr><td>Grafana</td><td><code>http://localhost:3001</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">curl</span> http://localhost:8000/health
+<span class="t-com"># {"status":"ok","version":"0.2.0"}</span></code></pre>
+      </div>
+      <div class="note note--warn">
+        <b>Grafana credentials</b> are <span class="inline">admin</span> /
+        <span class="inline">switchboard</span>, set in
+        <span class="inline">docker-compose.yml</span>, with anonymous viewer access enabled.
+        Change both before putting Grafana on a network anyone else can reach.
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- MANUAL -->
+    <section id="manual">
+      <h2>Manual setup</h2>
+      <p>If you'd rather not run the script, the same result takes three steps.</p>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">cp</span> .env.example .env
+
+<span class="t-com"># generate a Fernet key and paste it as ENCRYPTION_KEY in .env</span>
+<span class="t-cmd">python</span> -c <span class="t-str">"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</span>
+
+<span class="t-cmd">docker</span> compose up --build</code></pre>
+      </div>
+      <div class="note note--warn">
+        <b><code>ENCRYPTION_KEY</code> is mandatory.</b> It has no default, and
+        <span class="inline">core/key_manager.py</span> raises at first use without it. Losing it
+        makes every stored key undecryptable — back it up alongside the database volume.
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- LOCAL DEV -->
+    <section id="local">
+      <h2>Local development</h2>
+      <p>Running the gateway directly on the host, with Redis in a container.</p>
+
+      <h4>1 · Virtual environment</h4>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">python3.11</span> -m venv .venv
+<span class="t-cmd">source</span> .venv/bin/activate</code></pre>
+      </div>
+
+      <h4>2 · Dependencies</h4>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">pip</span> install -r requirements.txt</code></pre>
+      </div>
+
+      <h4>3 · Redis</h4>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-com"># using Docker</span>
+<span class="t-cmd">docker</span> run -d --name switchboard-redis -p 6379:6379 redis:7-alpine
+
+<span class="t-com"># or a locally installed Redis</span>
+<span class="t-cmd">redis-server</span></code></pre>
+      </div>
+
+      <h4>4 · Environment</h4>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">export</span> GROQ_API_KEY=<span class="t-str">"gsk_..."</span>
+<span class="t-cmd">export</span> GOOGLE_API_KEY=<span class="t-str">"AIza..."</span>
+<span class="t-cmd">export</span> ANTHROPIC_API_KEY=<span class="t-str">"sk-ant-..."</span>
+<span class="t-cmd">export</span> ENCRYPTION_KEY=<span class="t-str">"$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"</span>
+<span class="t-cmd">export</span> REDIS_URL=<span class="t-str">"redis://localhost:6379/0"</span></code></pre>
+      </div>
+
+      <h4>5 · Run</h4>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">uvicorn</span> gateway.main:app --host 0.0.0.0 --port 8000 --reload</code></pre>
+      </div>
+      <p>
+        Settings are read by Pydantic from the process environment <em>and</em> from a
+        <span class="inline">.env</span> file in the working directory, so exporting is optional if
+        <span class="inline">.env</span> is already populated.
+      </p>
+    </section>
+
+    <hr>
+
+    <!-- USAGE -->
+    <section id="usage">
+      <h2>Usage</h2>
+
+      <h3 id="usage-curl">Chat completions</h3>
+      <p>
+        The endpoint mirrors the OpenAI request shape. <span class="inline">provider</span> is the
+        one addition — a SwitchBoard extension that pins this single call to a vendor.
+      </p>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">curl</span> -X POST http://localhost:8000/v1/chat/completions \
+  -H <span class="t-str">"Content-Type: application/json"</span> \
+  -d <span class="t-str">'{
+    "model": "llama-3.1-8b-instant",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "What is the capital of France?"}
+    ],
+    "temperature": 0.7,
+    "provider": "groq"
+  }'</span></code></pre>
+      </div>
+
+      <h4>Request fields</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Field</th><th scope="col">Type</th><th scope="col">Default</th><th scope="col">Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>model</code></td><td>string</td><td>—</td><td>Required. Passed through to the provider verbatim.</td></tr>
+            <tr><td><code>messages</code></td><td>array</td><td>—</td><td>Required. Each item is <code>{role, content}</code>.</td></tr>
+            <tr><td><code>temperature</code></td><td>float</td><td><code>0.7</code></td><td>Also part of the cache key.</td></tr>
+            <tr><td><code>provider</code></td><td>string</td><td><code>SWITCHBOARD_PROVIDER</code></td><td><code>groq</code>, <code>google</code> or <code>anthropic</code>.</td></tr>
+            <tr><td><code>stream</code></td><td>bool</td><td><code>false</code></td><td>Accepted by the schema but <b>not implemented</b> — see <a href="#limits">Limitations</a>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="usage-python">Python client</h3>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">python</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-kw">from</span> openai <span class="t-kw">import</span> OpenAI
+
+client = <span class="t-fn">OpenAI</span>(
+    base_url=<span class="t-str">"http://localhost:8000/v1"</span>,
+    api_key=<span class="t-str">"not-needed"</span>,  <span class="t-com"># SwitchBoard holds the provider keys</span>
+)
+
+response = client.chat.completions.<span class="t-fn">create</span>(
+    model=<span class="t-str">"llama-3.1-8b-instant"</span>,
+    messages=[{<span class="t-str">"role"</span>: <span class="t-str">"user"</span>, <span class="t-str">"content"</span>: <span class="t-str">"Explain quantum computing in one sentence."</span>}],
+)
+<span class="t-fn">print</span>(response.choices[<span class="t-num">0</span>].message.content)</code></pre>
+      </div>
+      <p>
+        The <span class="inline">api_key</span> value is ignored — the gateway does not authenticate
+        callers. See <a href="#security">Auth &amp; exposure</a>.
+      </p>
+
+      <h3 id="usage-headers">Response headers</h3>
+      <p>Every response carries routing and cache metadata.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Header</th><th scope="col">Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>X-Cache</code></td><td><code>HIT</code> if served from the semantic cache, <code>MISS</code> otherwise.</td></tr>
+            <tr><td><code>X-Semantic-Similarity</code></td><td>Cosine similarity of the closest cached prompt, to four decimals.</td></tr>
+            <tr><td><code>X-Provider</code></td><td>The provider that served the request. Present on misses.</td></tr>
+            <tr><td><code>X-Latency-Ms</code></td><td>Provider response time in milliseconds. Present on misses.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <b>CORS note —</b> only <span class="inline">X-Cache</span> and
+        <span class="inline">X-Semantic-Similarity</span> are listed in
+        <span class="inline">expose_headers</span> on the CORS middleware. Browser JavaScript on a
+        cross-origin page can read those two; <span class="inline">X-Provider</span> and
+        <span class="inline">X-Latency-Ms</span> are visible to server-side clients and to the
+        bundled control panel, which nginx proxies same-origin.
+      </div>
+
+      <h3 id="usage-cache">Cache behaviour in practice</h3>
+      <p>
+        The cache matches on meaning, not on exact text. Asking the same thing a different way
+        still hits:
+      </p>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">output</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code>"Say hi in five words."      → X-Cache: MISS   X-Provider: groq   X-Latency-Ms: 424.0
+"Say hi in five words."      → X-Cache: HIT    X-Semantic-Similarity: 1.0000
+"Greet me using five words." → X-Cache: HIT    X-Semantic-Similarity: 0.9144</code></pre>
+      </div>
+      <p>
+        A hit costs one embedding call and no completion tokens. Entries expire one hour after
+        they are written.
+      </p>
+    </section>
+
+    <hr>
+
+    <!-- CONFIGURATION -->
+    <section id="configuration">
+      <h2>Configuration</h2>
+
+      <h3 id="env">Environment variables</h3>
+      <p>
+        Read by <span class="inline">core/config.py</span> from the environment or a
+        <span class="inline">.env</span> file. Unknown keys are permitted, so extra entries in
+        <span class="inline">.env</span> won't break startup.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Variable</th><th scope="col">Required</th><th scope="col">Default</th><th scope="col">Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>ENCRYPTION_KEY</code></td><td>Yes</td><td>—</td><td>Fernet key used to encrypt provider keys at rest.</td></tr>
+            <tr><td><code>GROQ_API_KEY</code></td><td>No</td><td><code>""</code></td><td>Seeded into the database on first start if no Groq key exists yet.</td></tr>
+            <tr><td><code>GOOGLE_API_KEY</code></td><td>No</td><td><code>""</code></td><td>Powers the semantic cache's embeddings. Absent ⇒ cache disabled.</td></tr>
+            <tr><td><code>ANTHROPIC_API_KEY</code></td><td>No</td><td><code>""</code></td><td>Enables the <code>anthropic</code> provider.</td></tr>
+            <tr><td><code>SWITCHBOARD_PROVIDER</code></td><td>No</td><td><code>groq</code></td><td>Provider used when a request omits <code>provider</code>.</td></tr>
+            <tr><td><code>REDIS_URL</code></td><td>No</td><td><code>redis://localhost:6379/0</code></td><td>Compose overrides this to <code>redis://redis:6379/0</code>.</td></tr>
+            <tr><td><code>SQLITE_DB_PATH</code></td><td>No</td><td><code>data/switchboard.db</code></td><td>Compose overrides this to <code>/app/data/switchboard.db</code>.</td></tr>
+            <tr><td><code>PORT</code></td><td>No</td><td><code>8000</code></td><td>Listen port <em>inside</em> the container.</td></tr>
+            <tr><td><code>HOST</code></td><td>No</td><td><code>0.0.0.0</code></td><td>Bind address.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <b>Seeding is one-shot.</b> <span class="inline">GROQ_API_KEY</span> is inserted into the
+        database only when no Groq key is present. Once a key exists, changing the variable has no
+        effect — manage keys through the <a href="#admin">admin API</a> from then on.
+      </div>
+
+      <h3 id="hostports">Host port mappings</h3>
+      <p>
+        These control the ports published on your machine by Compose.
+        <span class="inline">setup.sh</span> sets them automatically, remapping any that are already
+        in use; set them yourself to pin a service.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Variable</th><th scope="col">Default</th><th scope="col">Service</th></tr></thead>
+          <tbody>
+            <tr><td><code>GATEWAY_PORT</code></td><td><code>8000</code></td><td>Gateway</td></tr>
+            <tr><td><code>ADMIN_UI_PORT</code></td><td><code>3000</code></td><td>Control panel</td></tr>
+            <tr><td><code>REDIS_PORT</code></td><td><code>6379</code></td><td>Redis</td></tr>
+            <tr><td><code>PROMETHEUS_PORT</code></td><td><code>9090</code></td><td>Prometheus</td></tr>
+            <tr><td><code>GRAFANA_PORT</code></td><td><code>3001</code></td><td>Grafana</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="cache-config">Semantic cache</h3>
+      <p>
+        Cache behaviour is currently defined in code, in
+        <span class="inline">cache/redis_client.py</span>, not through environment variables. To
+        change any of it, edit the constructor:
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Setting</th><th scope="col">Value</th><th scope="col">Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>self.ttl</code></td><td><code>3600</code></td><td>Entry lifetime in seconds, applied with <code>SETEX</code>.</td></tr>
+            <tr><td><code>self.similarity_threshold</code></td><td><code>0.9</code></td><td>Minimum cosine similarity for a hit. Raised from a lower value to stop distinct prompts matching.</td></tr>
+            <tr><td><code>self.embedding_model</code></td><td><code>gemini-embedding-001</code></td><td>Model used to embed the joined message text.</td></tr>
+            <tr><td>Key prefix</td><td><code>nexus:cache:*</code></td><td>Redis namespace. Note the legacy prefix — it is not <code>switchboard:</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The stored key is a SHA-256 of <span class="inline">model + temperature + messages</span>,
+        so identical prompts at different temperatures occupy different entries. Retrieval, however,
+        scans <em>all</em> keys under the prefix and compares embeddings in Python — see
+        <a href="#limits">Limitations</a> before pointing production traffic at it.
+      </p>
+      <h4>Turning the cache off</h4>
+      <p>
+        Leave <span class="inline">GOOGLE_API_KEY</span> unset. The embedding client is never
+        constructed, <span class="inline">_get_embedding</span> returns
+        <span class="inline">None</span>, and both the read and write paths skip the cache while the
+        gateway keeps serving normally.
+      </p>
+      <h4>Clearing the cache</h4>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">docker</span> compose exec redis redis-cli --scan --pattern <span class="t-str">'nexus:cache:*'</span> \
+  | xargs -r <span class="t-cmd">docker</span> compose exec -T redis redis-cli DEL</code></pre>
+      </div>
+
+      <h3 id="routing">Routing &amp; key rotation</h3>
+      <p>Provider selection resolves in this order:</p>
+      <ol class="plain">
+        <li><span class="inline">provider</span> in the request body, if present.</li>
+        <li><span class="inline">SWITCHBOARD_PROVIDER</span> from the environment.</li>
+        <li><span class="inline">groq</span> as the final fallback.</li>
+      </ol>
+      <p>An unrecognised name raises immediately rather than silently falling back.</p>
+
+      <h4>Key selection</h4>
+      <p>
+        <span class="inline">KeyManager.get_available_key</span> orders enabled keys for the
+        provider like this:
+      </p>
+      <ol class="plain">
+        <li>Keys never used before — <span class="inline">rate_limit_remaining_tokens IS NULL</span> — are treated as unlimited and preferred.</li>
+        <li>Then keys with remaining tokens above <span class="inline">MIN_TOKENS_THRESHOLD</span> (<b>100</b>), highest remaining first.</li>
+        <li>If every key is below the threshold, the one with the soonest reset is used anyway, with a warning logged.</li>
+      </ol>
+
+      <h4>Failover</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Provider response</th><th scope="col">Action</th></tr></thead>
+          <tbody>
+            <tr><td><code>429</code></td><td>Key marked exhausted (reset defaults to 60s ahead), <code>switchboard_key_switches_total</code> increments, next key tried.</td></tr>
+            <tr><td><code>401</code></td><td>Key <b>disabled permanently</b> in the database, next key tried.</td></tr>
+            <tr><td><code>5xx</code></td><td>Next key tried; the key is left enabled.</td></tr>
+            <tr><td>Other <code>4xx</code></td><td>Not retried — raised straight to the caller.</td></tr>
+            <tr><td>All keys tried</td><td>The gateway returns <code>502 Bad Gateway</code> with the last error attached.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>Background maintenance</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Task</th><th scope="col">Interval</th><th scope="col">Effect</th></tr></thead>
+          <tbody>
+            <tr><td>Rate-limit sweeper</td><td>5s</td><td>Clears quota fields on keys whose reset time has passed, making them selectable again.</td></tr>
+            <tr><td>Usage bucket cleanup</td><td>600s</td><td>Deletes per-minute usage buckets older than 25 hours.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Both are asyncio tasks started in the FastAPI lifespan and cancelled on shutdown. The
+        intervals live in <span class="inline">gateway/main.py</span>.
+      </p>
+
+      <h3 id="security">Auth &amp; exposure</h3>
+      <div class="note note--warn">
+        <b>There is no caller authentication.</b> <span class="inline">/v1/chat/completions</span>
+        and every <span class="inline">/admin/*</span> endpoint are open to anyone who can reach the
+        port, and CORS is configured with
+        <span class="inline">allow_origins=["*"]</span>. Treat SwitchBoard as a service for a trusted
+        network only — bind it to localhost, or put an authenticating reverse proxy in front of it
+        before it is reachable from anywhere else.
+      </div>
+      <p>What the gateway <em>does</em> protect:</p>
+      <ul>
+        <li><b>Keys at rest.</b> Provider credentials are Fernet-encrypted (AES-128-CBC with HMAC) before insertion into SQLite and decrypted only at the moment a request is sent.</li>
+        <li><b>Keys in responses.</b> <span class="inline">/admin/keys</span> and <span class="inline">/admin/stats</span> return masked values — first four and last four characters only.</li>
+        <li><b>Prompt residency.</b> Prompts and responses stay on your host except for the call to the provider you selected, plus the embedding call to Google when the semantic cache is enabled.</li>
+      </ul>
+      <p>Two further deployment notes from <span class="inline">docker-compose.yml</span>:</p>
+      <ul>
+        <li>The gateway service bind-mounts the project directory as <span class="inline">.:/app</span>. That is convenient for development but means container code follows your working tree — pin an image build for anything long-lived.</li>
+        <li>Redis is published on the host at <span class="inline">REDIS_PORT</span> with no password. Remove that port mapping if the host is not private.</li>
+      </ul>
+    </section>
+
+    <hr>
+
+    <!-- ADMIN -->
+    <section id="admin">
+      <h2>Admin API</h2>
+      <p>
+        Mounted under <span class="inline">/admin</span>. Interactive documentation for every
+        endpoint is generated at <span class="inline">/docs</span>.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Method</th><th scope="col">Endpoint</th><th scope="col">Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>POST</code></td><td><code>/admin/keys</code></td><td>Add a key for a provider. Body: <code>provider</code>, <code>api_key</code>, optional <code>label</code>.</td></tr>
+            <tr><td><code>GET</code></td><td><code>/admin/keys</code></td><td>List all keys, masked. Optional <code>?provider=</code> filter.</td></tr>
+            <tr><td><code>DELETE</code></td><td><code>/admin/keys/{key_id}</code></td><td>Delete a key. <code>404</code> if it doesn't exist.</td></tr>
+            <tr><td><code>PATCH</code></td><td><code>/admin/keys/{key_id}</code></td><td>Enable or disable a key. Body: <code>{"is_enabled": true}</code>.</td></tr>
+            <tr><td><code>GET</code></td><td><code>/admin/keys/usage</code></td><td>Per-key request and token counts for the last 24 hours and the last minute.</td></tr>
+            <tr><td><code>GET</code></td><td><code>/admin/providers</code></td><td>Providers with total keys, enabled keys and keys still holding quota.</td></tr>
+            <tr><td><code>GET</code></td><td><code>/admin/stats</code></td><td>Totals plus full rate-limit state for every key.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="admin-examples">Examples</h3>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-com"># add a key</span>
+<span class="t-cmd">curl</span> -X POST http://localhost:8000/admin/keys \
+  -H <span class="t-str">"Content-Type: application/json"</span> \
+  -d <span class="t-str">'{"provider": "groq", "api_key": "gsk_...", "label": "personal-key"}'</span>
+
+<span class="t-com"># take a key out of rotation without deleting it</span>
+<span class="t-cmd">curl</span> -X PATCH http://localhost:8000/admin/keys/3 \
+  -H <span class="t-str">"Content-Type: application/json"</span> \
+  -d <span class="t-str">'{"is_enabled": false}'</span>
+
+<span class="t-com"># who has quota left?</span>
+<span class="t-cmd">curl</span> http://localhost:8000/admin/providers</code></pre>
+      </div>
+
+      <h3 id="admin-ui">Control panel</h3>
+      <p>
+        A static dashboard ships as the <span class="inline">admin-ui</span> service on port 3000 —
+        a single <span class="inline">vis/index.html</span> served by nginx, which reverse-proxies
+        <span class="inline">/v1/</span>, <span class="inline">/admin/</span>,
+        <span class="inline">/health</span> and <span class="inline">/metrics</span> to the gateway
+        over the Compose network. Because everything is same-origin there, the panel can read the
+        <span class="inline">X-Cache</span> and <span class="inline">X-Provider</span> headers
+        directly.
+      </p>
+    </section>
+
+    <hr>
+
+    <!-- OBSERVABILITY -->
+    <section id="observability">
+      <h2>Observability</h2>
+
+      <h3 id="metrics">Metrics</h3>
+      <p>
+        The gateway exposes <span class="inline">/metrics</span> in Prometheus text format. Seven
+        SwitchBoard metric families are defined in <span class="inline">core/metrics.py</span>,
+        alongside standard HTTP metrics contributed automatically by
+        <span class="inline">prometheus-fastapi-instrumentator</span>.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Metric</th><th scope="col">Type</th><th scope="col">Labels</th><th scope="col">Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>switchboard_cache_hits_total</code></td><td>Counter</td><td>—</td><td>Semantic cache hits.</td></tr>
+            <tr><td><code>switchboard_cache_misses_total</code></td><td>Counter</td><td>—</td><td>Semantic cache misses.</td></tr>
+            <tr><td><code>switchboard_provider_requests_total</code></td><td>Counter</td><td><code>provider</code>, <code>key_label</code>, <code>status</code></td><td>Requests per provider and key. Status is one of <code>success</code>, <code>rate_limited</code>, <code>auth_error</code>, <code>server_error</code>, <code>client_error</code>, <code>error</code>.</td></tr>
+            <tr><td><code>switchboard_provider_latency_seconds</code></td><td>Histogram</td><td><code>provider</code></td><td>Provider latency. Buckets: 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30s.</td></tr>
+            <tr><td><code>switchboard_key_switches_total</code></td><td>Counter</td><td>—</td><td>Times the router moved to a different key mid-request.</td></tr>
+            <tr><td><code>switchboard_tokens_processed_total</code></td><td>Counter</td><td><code>direction</code></td><td>Tokens processed, <code>input</code> or <code>output</code>.</td></tr>
+            <tr><td><code>switchboard_active_keys</code></td><td>Gauge</td><td><code>provider</code></td><td>Enabled keys per provider, set at startup.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <b>Two counting caveats.</b> <span class="inline">switchboard_active_keys</span> is populated
+        during the lifespan startup hook only, so it does not follow keys added later at runtime —
+        query <span class="inline">/admin/providers</span> for live counts. And a cache
+        <em>hit</em> increments no provider metrics at all, which is exactly why the hit-rate panel
+        divides by hits + misses rather than by HTTP request count.
+      </div>
+
+      <h3 id="prometheus">Prometheus</h3>
+      <p>
+        <span class="inline">prometheus/prometheus.yml</span> defines a single scrape job,
+        <span class="inline">switchboard-gateway</span>, hitting
+        <span class="inline">gateway:8000/metrics</span> every 15 seconds and attaching a
+        <span class="inline">service="switchboard"</span> label.
+      </p>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">yaml</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-kw">global</span>:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+<span class="t-kw">scrape_configs</span>:
+  - job_name: <span class="t-str">"switchboard-gateway"</span>
+    metrics_path: <span class="t-str">"/metrics"</span>
+    static_configs:
+      - targets: [<span class="t-str">"gateway:8000"</span>]
+        labels:
+          service: <span class="t-str">"switchboard"</span></code></pre>
+      </div>
+
+      <h3 id="grafana">Grafana</h3>
+      <p>
+        Both the Prometheus datasource and the dashboard are provisioned from
+        <span class="inline">grafana/provisioning/</span> at container start — there is nothing to
+        import by hand. The <b>Switchboard Gateway</b> dashboard carries nine panels:
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Panel</th><th scope="col">Type</th><th scope="col">Query</th></tr></thead>
+          <tbody>
+            <tr><td>Cache Hit Rate</td><td>timeseries</td><td><code>rate(switchboard_cache_hits_total[5m]) / (rate(switchboard_cache_hits_total[5m]) + rate(switchboard_cache_misses_total[5m]))</code></td></tr>
+            <tr><td>Total Request Throughput</td><td>timeseries</td><td><code>rate(http_requests_total{handler="/v1/chat/completions"}[5m])</code></td></tr>
+            <tr><td>Total Requests</td><td>stat</td><td><code>http_requests_total{handler="/v1/chat/completions"}</code></td></tr>
+            <tr><td>Cache Hits</td><td>stat</td><td><code>switchboard_cache_hits_total</code></td></tr>
+            <tr><td>Provider Latency p50/p95/p99</td><td>timeseries</td><td><code>histogram_quantile(0.95, rate(switchboard_provider_latency_seconds_bucket[5m]))</code></td></tr>
+            <tr><td>Key Switches</td><td>stat</td><td><code>increase(switchboard_key_switches_total[1h])</code></td></tr>
+            <tr><td>Active Keys</td><td>stat</td><td><code>switchboard_active_keys</code></td></tr>
+            <tr><td>Tokens Processed</td><td>timeseries</td><td><code>rate(switchboard_tokens_processed_total[5m])</code></td></tr>
+            <tr><td>Cache Hits vs Misses</td><td>timeseries</td><td><code>rate(switchboard_cache_hits_total[5m])</code>, <code>rate(switchboard_cache_misses_total[5m])</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Skip both services entirely with <span class="inline">./setup.sh --minimal</span> if you only
+        want the gateway, Redis and the control panel.
+      </p>
+    </section>
+
+    <hr>
+
+    <!-- ARCHITECTURE -->
+    <section id="architecture">
+      <h2>Architecture</h2>
+      <p>
+        The gateway is a single FastAPI process. Redis, Prometheus, Grafana and the nginx control
+        panel are sibling containers on the Compose network. Configuration state lives in a SQLite
+        file on a named volume, <span class="inline">switchboard-data</span>.
+      </p>
+      <p>
+        A full request walkthrough with a diagram is on the
+        <a href="index.html#architecture">home page</a>. The lifecycle in detail:
+      </p>
+
+      <h3 id="lifecycle">Request lifecycle</h3>
+      <ol class="plain">
+        <li><b>Validation.</b> The body is parsed into <span class="inline">ChatCompletionRequest</span>. Unknown providers are rejected before any network call.</li>
+        <li><b>Cache read.</b> Message contents are joined into one string and embedded. Every key under <span class="inline">nexus:cache:*</span> is fetched and scored by cosine similarity; the best score is kept.</li>
+        <li><b>Hit.</b> At <span class="inline">≥ 0.90</span> the stored <span class="inline">ChatCompletionResponse</span> is returned with <span class="inline">X-Cache: HIT</span> and the similarity score. No provider is contacted. A failure anywhere in this path is logged as a warning and treated as a miss — the cache can never take the gateway down.</li>
+        <li><b>Miss.</b> <span class="inline">CACHE_MISSES</span> increments and the router resolves the provider, loads every enabled key for it, and starts with the best-quota key.</li>
+        <li><b>Provider call.</b> The adapter posts over HTTPX with a 30-second timeout and maps the vendor's reply onto the unified schema. Anthropic requests are translated — the first system message becomes the top-level <span class="inline">system</span> field and <span class="inline">max_tokens</span> is set to 1024.</li>
+        <li><b>Bookkeeping.</b> <span class="inline">x-ratelimit-*</span> headers update the key's row, an absolute reset timestamp is computed from Groq-style durations such as <span class="inline">1m6s</span>, per-minute usage buckets increment, and the four provider metrics record the outcome.</li>
+        <li><b>Cache write.</b> The response is stored under a SHA-256 of model, temperature and messages, with its embedding, for one hour. A write failure is logged and the response is still returned.</li>
+      </ol>
+
+      <h3 id="storage">Storage</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">Table</th><th scope="col">Holds</th></tr></thead>
+          <tbody>
+            <tr><td><code>api_keys</code></td><td>Encrypted key, provider, label, enabled flag, remaining tokens/requests, reset timestamps, last use.</td></tr>
+            <tr><td><code>provider_config</code></td><td>Per-provider enable flag and base URL override.</td></tr>
+            <tr><td><code>key_usage_buckets</code></td><td>Per-key, per-minute request and token counts. Cascade-deleted with the key; pruned past 25 hours.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The connection is a singleton in WAL mode with a 5-second busy timeout and foreign keys on,
+        so concurrent async tasks don't collide. The schema is created idempotently at startup and a
+        lightweight migration adds <span class="inline">rate_limit_resets_at</span> to databases
+        created before it existed.
+      </p>
+    </section>
+
+    <hr>
+
+    <!-- TESTING -->
+    <section id="testing">
+      <h2>Testing</h2>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-com"># full suite</span>
+<span class="t-cmd">pytest</span>
+
+<span class="t-com"># one file</span>
+<span class="t-cmd">pytest</span> tests/test_routing.py
+
+<span class="t-com"># one test</span>
+<span class="t-cmd">pytest</span> tests/test_routing.py::test_router_picks_key_and_calls_provider
+
+<span class="t-com"># verbose, or with print output</span>
+<span class="t-cmd">pytest</span> -v
+<span class="t-cmd">pytest</span> -s</code></pre>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th scope="col">File</th><th scope="col">Covers</th></tr></thead>
+          <tbody>
+            <tr><td><code>tests/test_admin_api.py</code></td><td>Admin CRUD endpoints.</td></tr>
+            <tr><td><code>tests/test_key_manager.py</code></td><td>Encryption, rotation, rate-limit parsing.</td></tr>
+            <tr><td><code>tests/test_routing.py</code></td><td>Router failover and key selection.</td></tr>
+            <tr><td><code>tests/test_semantic_cache.py</code></td><td>Embedding-based cache logic.</td></tr>
+            <tr><td><code>tests/test_provider_routing.py</code></td><td>Provider selection via the request body.</td></tr>
+            <tr><td><code>tests/test_usage_tracking.py</code></td><td>Per-key usage buckets and aggregation.</td></tr>
+            <tr><td><code>tests/test_token_exhaustion.py</code></td><td>Rate-limit exhaustion scenarios.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <b>Writing new tests —</b> each test module points
+        <span class="inline">os.environ["SQLITE_DB_PATH"]</span> at a temporary directory and sets a
+        fresh <span class="inline">ENCRYPTION_KEY</span> <em>before</em> importing any application
+        module. Settings are read at import time, so following that order matters.
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- STRUCTURE -->
+    <section id="structure">
+      <h2>Project structure</h2>
+      <div class="code">
+        <div class="code__bar"><span class="code__lang">tree</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code>switchboard/
+├── gateway/
+│   ├── main.py                 <span class="t-com"># FastAPI app, lifespan, /v1/chat/completions</span>
+│   └── admin.py                <span class="t-com"># Admin API router (/admin/*)</span>
+├── core/
+│   ├── config.py               <span class="t-com"># Pydantic settings (env vars)</span>
+│   ├── database.py             <span class="t-com"># SQLite schema, usage buckets, cleanup</span>
+│   ├── key_manager.py          <span class="t-com"># Key CRUD, Fernet, rate-limit ledger</span>
+│   ├── metrics.py              <span class="t-com"># Prometheus metric definitions</span>
+│   └── schemas.py              <span class="t-com"># Pydantic request/response models</span>
+├── routing/
+│   └── router.py               <span class="t-com"># Key-availability routing + failover</span>
+├── providers/
+│   ├── base.py                 <span class="t-com"># Abstract LLMProvider interface</span>
+│   ├── groq_provider.py
+│   ├── google_provider.py
+│   └── anthropic_provider.py
+├── cache/
+│   └── redis_client.py         <span class="t-com"># Semantic cache (embeddings + Redis)</span>
+├── vis/
+│   ├── index.html              <span class="t-com"># Static control panel</span>
+│   ├── default.conf.template   <span class="t-com"># nginx reverse proxy to the gateway</span>
+│   └── Dockerfile
+├── prometheus/prometheus.yml
+├── grafana/
+│   ├── dashboards/             <span class="t-com"># Pre-built dashboard JSON</span>
+│   └── provisioning/           <span class="t-com"># Datasource + dashboard provisioning</span>
+├── site/                       <span class="t-com"># This documentation site</span>
+├── tests/
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+└── setup.sh</code></pre>
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- LIMITS -->
+    <section id="limits">
+      <h2>Limitations</h2>
+      <p>
+        Known constraints in <span class="inline">v0.2.0</span>, stated plainly so you can decide
+        where this fits.
+      </p>
+
+      <h3 id="limit-streaming">Streaming is not implemented</h3>
+      <p>
+        <span class="inline">ChatCompletionRequest</span> accepts a
+        <span class="inline">stream</span> field, but both the Groq and Google adapters overwrite it
+        with <span class="inline">False</span> before sending
+        (<em>"For MVP, disable streaming as it requires SSE handling"</em>), and the Anthropic adapter
+        never forwards it. Every response is returned whole. Setting
+        <span class="inline">stream: true</span> will not error — it simply has no effect.
+      </p>
+
+      <h3 id="limit-cache">Cache lookup is a linear scan</h3>
+      <p>
+        Retrieval calls <span class="inline">KEYS nexus:cache:*</span> and then fetches and scores
+        every entry in Python. Cost grows linearly with cache size, and
+        <span class="inline">KEYS</span> blocks Redis while it runs. The source calls this out as an
+        MVP choice: a vector index — Redis Stack, or a dedicated vector database — is the
+        intended replacement.
+      </p>
+
+      <h3 id="limit-auth">No authentication</h3>
+      <p>
+        Neither the completions endpoint nor the admin API checks a caller identity, and CORS allows
+        every origin. See <a href="#security">Auth &amp; exposure</a> for what to do about it.
+      </p>
+
+      <h3 id="limit-misc">Smaller things</h3>
+      <ul>
+        <li><span class="inline">switchboard_active_keys</span> is set once at startup and does not track keys added later.</li>
+        <li>Anthropic requests are capped at <span class="inline">max_tokens: 1024</span>, hardcoded in the adapter.</li>
+        <li><span class="inline">get_cost_per_token</span> exists on the provider interface but returns rough estimates for Groq and zeros elsewhere; nothing consumes it yet.</li>
+        <li>The cache key prefix is still <span class="inline">nexus:cache:</span>, a leftover from an earlier name.</li>
+        <li>Provider requests use a fixed 30-second HTTPX timeout that is not configurable.</li>
+      </ul>
+
+      <h3 id="license">License &amp; contributing</h3>
+      <div class="note">
+        <b>No <code>LICENSE</code> file is published in the repository</b>, and there is no
+        <span class="inline">CONTRIBUTING.md</span>. The README states the project is
+        <em>"provided as-is for educational and internal use."</em> Without an explicit license,
+        default copyright applies — ask the maintainer before redistributing or using it commercially.
+        Contributions go through issues and pull requests; match the conventions already in the
+        codebase, and add tests under <span class="inline">tests/</span> following the temporary-database
+        pattern described above.
+      </div>
+      <div class="hero__cta stack-md">
+        <a class="btn btn--key" href="https://github.com/sankalp-happy/switchboard/issues">Open an issue</a>
+        <a class="btn" href="https://github.com/sankalp-happy/switchboard">Browse the source</a>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============================= FOOTER ============================= -->
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot__grid">
+      <div>
+        <div class="foot__brand">SwitchBoard</div>
+        <p class="foot__blurb">
+          A multi-provider LLM operations gateway with semantic caching, automatic key rotation
+          and production-grade observability. Self-hosted, always.
+        </p>
+      </div>
+      <div>
+        <h4>Documentation</h4>
+        <ul>
+          <li><a href="#quickstart">Quickstart</a></li>
+          <li><a href="#local">Local development</a></li>
+          <li><a href="#usage">Usage</a></li>
+          <li><a href="#configuration">Configuration</a></li>
+          <li><a href="#admin">Admin API</a></li>
+          <li><a href="#observability">Observability</a></li>
+          <li><a href="#limits">Limitations</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/sankalp-happy/switchboard">Repository</a></li>
+          <li><a href="https://github.com/sankalp-happy/switchboard/issues">Issues</a></li>
+          <li><a href="https://github.com/sankalp-happy/switchboard/pulls">Pull requests</a></li>
+          <li><a href="https://github.com/sankalp-happy/switchboard/blob/main/README.md">README</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot__bottom">
+      <span>© <span data-year>2026</span> SwitchBoard · v0.2.0</span>
+      <span>No <code>LICENSE</code> file is published. The README states the project is provided as-is for educational and internal use.</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/switchboard.js"></script>
+</body>
+</html>

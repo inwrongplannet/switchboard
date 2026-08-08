@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SwitchBoard — a self-hosted operator for every LLM call</title>
+<meta name="description" content="SwitchBoard is a self-hosted, OpenAI-compatible LLM gateway. Semantic caching on Redis, automatic API-key rotation with failover across Groq, Google and Anthropic, and Prometheus + Grafana observability. One command to install.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:title" content="SwitchBoard — a self-hosted operator for every LLM call">
+<meta property="og:description" content="Semantic caching, automatic key rotation, and production-grade observability in front of Groq, Google and Anthropic. Self-hosted, OpenAI-compatible.">
+<meta property="og:type" content="website">
+<!-- Applied before first paint so a stored preference never flashes the
+     other theme. Must stay inline and stay above the stylesheet. -->
+<script>(function(){try{var t=localStorage.getItem('sb-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/switchboard.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%232b2620'/><circle cx='11' cy='11' r='3.4' fill='none' stroke='%23e0ac1f' stroke-width='2'/><circle cx='21' cy='21' r='3.4' fill='none' stroke='%23cfae52' stroke-width='2'/><path d='M11 15 C 11 22, 21 14, 21 17' fill='none' stroke='%23cf8442' stroke-width='2'/></svg>">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- ============================= NAV ============================= -->
+<header class="nav">
+  <div class="wrap nav__in">
+    <a class="brand" href="index.html">
+      <svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="6" fill="none" stroke="currentColor" opacity=".35"/>
+        <circle cx="11" cy="11" r="3.6" fill="none" stroke="var(--accent)" stroke-width="2"/>
+        <circle cx="21" cy="21" r="3.6" fill="none" stroke="var(--brass)" stroke-width="2"/>
+        <path d="M11 15.2 C 11 23, 21 14, 21 17.2" fill="none" stroke="var(--copper)" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      SwitchBoard <span class="v">v0.2.0</span>
+    </a>
+    <nav class="nav__links" id="nav-links" aria-label="Primary">
+      <a href="#problem">Why</a>
+      <a href="#features">Features</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#telemetry">Telemetry</a>
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/sankalp-happy/switchboard">GitHub&nbsp;↗</a>
+    </nav>
+    <div class="nav__end">
+      <button class="themesw" type="button" aria-label="Switch theme">
+        <span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></span>
+        <span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke-linecap="round"/></svg></span>
+      </button>
+      <button class="nav__toggle" id="nav-toggle" aria-expanded="false" aria-controls="nav-links">Menu</button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ============================= HERO ============================= -->
+<section class="hero">
+  <div class="wrap hero__grid">
+
+    <div>
+      <h1 class="display">Patch every LLM call through <em>one board</em>.</h1>
+      <p class="lede">
+        SwitchBoard sits between your application and Groq, Google and Anthropic. It answers
+        repeat questions from a semantic cache instead of the provider, rotates across your API
+        keys the moment one hits a rate limit, and reports every hop to Prometheus. The endpoint
+        is OpenAI-compatible — change the base URL, keep your client.
+      </p>
+
+      <div class="hero__cta">
+        <a class="btn btn--key" href="docs.html#quickstart">
+          Install in one command
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 8h11M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="btn" href="https://github.com/sankalp-happy/switchboard">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          View source
+        </a>
+      </div>
+
+      <!-- The prompt marker sits outside <code> so it is not copied. -->
+      <div class="cmd">
+        <span class="cmd__p" aria-hidden="true">$</span>
+        <code>git clone https://github.com/sankalp-happy/switchboard.git &amp;&amp; cd switchboard &amp;&amp; ./setup.sh</code>
+        <button class="code__copy" type="button">Copy</button>
+      </div>
+
+    </div>
+
+    <!-- Patch-panel figure -->
+    <figure class="panelfig" aria-labelledby="panelcap">
+      <figcaption class="panelfig__bar" id="panelcap">
+        <span>Patch field · request routing</span>
+        <span class="panelfig__lamps">
+          <i class="led led--on"></i><i class="led led--warn led--pulse"></i><i class="led"></i>
+        </span>
+      </figcaption>
+
+      <svg viewBox="0 0 620 400" role="img" aria-label="A patch panel: one incoming request jack is corded to three destination jacks — semantic cache, router, and provider adapters.">
+        <defs>
+          <!-- Stops are coloured from CSS so the brass re-tints per theme. -->
+          <radialGradient id="brass" cx="35%" cy="30%">
+            <stop offset="0%"/><stop offset="55%"/><stop offset="100%"/>
+          </radialGradient>
+        </defs>
+
+        <!-- recessed field -->
+        <rect class="pf-field" x="6" y="6" width="608" height="322" rx="5"/>
+        <!-- screws -->
+        <g class="pf-screw">
+          <circle cx="20" cy="20" r="4"/><circle cx="600" cy="20" r="4"/>
+          <circle cx="20" cy="314" r="4"/><circle cx="600" cy="314" r="4"/>
+        </g>
+
+        <!-- cords (drawn under the jacks) -->
+        <path class="cord cord--dim"  d="M105 170 C 195 215, 300 130, 401 90"/>
+        <path class="cord cord--dim"  d="M105 170 C 195 245, 300 305, 401 250"/>
+        <path class="cord cord--live" d="M105 170 C 200 250, 305 215, 401 170"/>
+        <path class="pulse"           d="M105 170 C 200 250, 305 215, 401 170"/>
+
+        <!-- ingress jack -->
+        <g>
+          <circle class="pf-ring" cx="86" cy="170" r="20"/>
+          <circle class="pf-hole" cx="86" cy="170" r="11.5"/>
+          <circle class="dot-warn" cx="86" cy="170" r="5"/>
+          <text class="svg-label svg-label--key" x="86" y="222" text-anchor="middle">Request in</text>
+          <text class="svg-sub" x="86" y="238" text-anchor="middle">POST /v1/chat/completions</text>
+        </g>
+
+        <!-- destination jacks -->
+        <g>
+          <circle class="pf-ring" cx="420" cy="90" r="17"/>
+          <circle class="pf-hole" cx="420" cy="90" r="9.5"/>
+          <circle class="dot-ok" cx="420" cy="90" r="4"/>
+          <text class="svg-label" x="452" y="86">Semantic cache</text>
+          <text class="svg-sub"   x="452" y="102">redis 7 · gemini embeddings</text>
+        </g>
+        <g>
+          <circle class="pf-ring" cx="420" cy="170" r="17"/>
+          <circle class="pf-hole" cx="420" cy="170" r="9.5"/>
+          <circle class="dot-warn" cx="420" cy="170" r="5"/>
+          <text class="svg-label svg-label--key" x="452" y="166">Router</text>
+          <text class="svg-sub"   x="452" y="182">key selection · failover</text>
+        </g>
+        <g>
+          <circle class="pf-ring" cx="420" cy="250" r="17"/>
+          <circle class="pf-hole" cx="420" cy="250" r="9.5"/>
+          <circle class="dot-info" cx="420" cy="250" r="4"/>
+          <text class="svg-label" x="452" y="246">Providers</text>
+          <text class="svg-sub"   x="452" y="262">groq · google · anthropic</text>
+        </g>
+
+        <!-- lamp rail -->
+        <rect class="pf-rail" x="6" y="340" width="608" height="54" rx="4"/>
+        <g>
+          <circle class="dot-ok" cx="34" cy="367" r="5"/>
+          <text class="svg-sub" x="48" y="371">X-CACHE: HIT</text>
+          <circle class="dot-warn" cx="214" cy="367" r="5"/>
+          <text class="svg-sub" x="228" y="371">X-CACHE: MISS</text>
+          <circle class="dot-alarm" cx="404" cy="367" r="5"/>
+          <text class="svg-sub" x="418" y="371">429 → ROTATE KEY</text>
+        </g>
+      </svg>
+
+      <div class="readout">
+        <div><b>&gt;</b> "Say hi in five words."&nbsp;&nbsp;&nbsp;&nbsp;<span class="miss">X-Cache: MISS</span> · X-Provider: groq · X-Latency-Ms: 424.0</div>
+        <div><b>&gt;</b> "Say hi in five words."&nbsp;&nbsp;&nbsp;&nbsp;<span class="hit">X-Cache: HIT</span> · <span class="sim">X-Semantic-Similarity: 1.0000</span></div>
+        <div><b>&gt;</b> "Greet me using five words."&nbsp;<span class="hit">X-Cache: HIT</span> · <span class="sim">X-Semantic-Similarity: 0.9144</span></div>
+      </div>
+    </figure>
+
+  </div>
+</section>
+
+<!-- ============================= PROBLEM ============================= -->
+<section id="problem" class="band">
+  <div class="wrap">
+    <div class="srail">
+      <span class="srail__n">The problem</span>
+      <i class="srail__r" aria-hidden="true"></i>
+      <span class="srail__d">3 faults</span>
+    </div>
+    <div class="sec-head">
+      <h2 class="sec-title">Three things break when you call a provider directly.</h2>
+      <p class="lede">
+        None of them are exotic. They show up the first week you put a prototype in front of
+        real traffic, and every one of them is a gateway's job — not your application's.
+      </p>
+    </div>
+
+    <div class="faults">
+      <article class="fault">
+        <div class="fault__n">Fault 01</div>
+        <h3>Keys run dry mid-traffic</h3>
+        <p>
+          Provider keys carry hard per-minute token and request ceilings. One <span class="inline">429</span>
+          and the call fails — while a second key sits idle in your <span class="inline">.env</span>.
+          SwitchBoard marks the exhausted key, retries the next one, and only surfaces an error
+          once every key is genuinely spent.
+        </p>
+      </article>
+      <article class="fault">
+        <div class="fault__n">Fault 02</div>
+        <h3>You pay twice for one question</h3>
+        <p>
+          People ask the same thing in different words all day long. Hash-based caches miss
+          every rephrasing. SwitchBoard embeds the prompt and compares it by cosine similarity,
+          so <em>"greet me using five words"</em> hits the entry stored for
+          <em>"say hi in five words."</em>
+        </p>
+      </article>
+      <article class="fault">
+        <div class="fault__n">Fault 03</div>
+        <h3>No view of what's happening</h3>
+        <p>
+          A provider SDK hands back a response, not a hit rate, a p95, or a count of key
+          rotations. SwitchBoard exposes all of it on <span class="inline">/metrics</span> and
+          ships a Grafana dashboard that is provisioned for you at first boot.
+        </p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= FEATURES ============================= -->
+<section id="features">
+  <div class="wrap">
+    <div class="srail">
+      <span class="srail__n">What's on the board</span>
+      <i class="srail__r" aria-hidden="true"></i>
+      <span class="srail__d">8 modules</span>
+    </div>
+    <div class="sec-head">
+      <h2 class="sec-title">A small, legible gateway — not a platform.</h2>
+      <p class="lede">
+        Roughly two thousand lines of Python you can read in an afternoon. Every part of it is
+        listed here, and every claim on this page maps to a file in the repository.
+      </p>
+    </div>
+
+    <div class="index">
+
+      <article class="item">
+        <div class="item__ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M7 3v5M17 3v5"/><rect x="4" y="8" width="16" height="6" rx="2"/><path d="M12 14v4a3 3 0 0 0 3 3h1"/></svg></div>
+        <h3 class="item__name">Drop-in OpenAI-compatible surface</h3>
+        <div class="item__body">
+          <p>
+            <span class="inline">POST /v1/chat/completions</span> accepts and returns the shapes your
+            client already speaks. Point the SDK at SwitchBoard and delete nothing else.
+          </p>
+          <div class="code code--flush">
+            <div class="code__bar"><span class="code__lang">python</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-kw">from</span> openai <span class="t-kw">import</span> OpenAI
+
+client = <span class="t-fn">OpenAI</span>(
+    base_url=<span class="t-str">"http://localhost:8000/v1"</span>,
+    api_key=<span class="t-str">"not-needed"</span>,   <span class="t-com"># SwitchBoard holds the real keys</span>
+)</code></pre>
+          </div>
+        </div>
+        <div class="item__meta"><b>gateway/main.py</b>openai sdk compatible</div>
+      </article>
+
+      <article class="item">
+        <div class="item__ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7" opacity=".6"/><circle cx="12" cy="12" r="10.5" opacity=".3"/></svg></div>
+        <h3 class="item__name">Semantic caching</h3>
+        <div class="item__body">
+          <p>
+            Prompts are embedded with <span class="inline">gemini-embedding-001</span> and compared
+            by cosine similarity. Anything at or above <b>0.90</b> is served from Redis with a
+            one-hour TTL — no provider call, no tokens spent.
+          </p>
+        </div>
+        <div class="item__meta"><b>cache/redis_client.py</b>threshold 0.90 · ttl 3600s</div>
+      </article>
+
+      <article class="item">
+        <div class="item__ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6"/><path d="M17.5 3v3.6h-3.6M6.5 21v-3.6h3.6"/></svg></div>
+        <h3 class="item__name">Rotation &amp; failover</h3>
+        <div class="item__body">
+          <p>
+            Register as many keys per provider as you like. The router picks the one with the most
+            remaining quota, then walks the rest on <span class="inline">429</span>,
+            <span class="inline">401</span> or <span class="inline">5xx</span>. A sweeper revives
+            expired keys every five seconds.
+          </p>
+        </div>
+        <div class="item__meta"><b>routing/router.py</b>sweeper 5s</div>
+      </article>
+
+      <article class="item">
+        <div class="item__ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15" r="1.3" fill="currentColor" stroke="none"/></svg></div>
+        <h3 class="item__name">Keys encrypted at rest</h3>
+        <div class="item__body">
+          <p>
+            Provider credentials are sealed with Fernet before they touch SQLite and are only ever
+            returned masked — <span class="inline">gsk_…4f2a</span>. The
+            <span class="inline">ENCRYPTION_KEY</span> stays in your environment.
+          </p>
+        </div>
+        <div class="item__meta"><b>core/key_manager.py</b>fernet · sqlite</div>
+      </article>
+
+      <article class="item">
+        <div class="item__ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 7h7M14 7h7M3 17h3M10 17h11"/><circle cx="12" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg></div>
+        <h3 class="item__name">Per-request routing</h3>
+        <div class="item__body">
+          <p>
+            Set <span class="inline">"provider"</span> in the request body to pin a single call to
+            <span class="inline">groq</span>, <span class="inline">google</span> or
+            <span class="inline">anthropic</span>. Omit it and
+            <span class="inline">SWITCHBOARD_PROVIDER</span> decides.
+          </p>
+        </div>
+        <div class="item__meta"><b>providers/</b>3 adapters</div>
+      </article>
+
+      <article class="item">
+        <div class="item__ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6 20.5 6v6c0 5-3.6 8.3-8.5 9.4C7.1 20.3 3.5 17 3.5 12V6Z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg></div>
+        <h3 class="item__name">Self-hosted by default</h3>
+        <div class="item__body">
+          <p>
+            There is no SwitchBoard service to sign up for. The whole stack — gateway, Redis,
+            Prometheus, Grafana, admin UI — runs from one Compose file on hardware you control.
+            Prompts leave your host only when they reach the provider you chose.
+          </p>
+        </div>
+        <div class="item__meta"><b>docker-compose.yml</b>6 services</div>
+      </article>
+
+      <article class="item">
+        <div class="item__ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3.5 14a8.5 8.5 0 0 1 17 0"/><path d="M12 14l4-4"/><circle cx="12" cy="14" r="1.4" fill="currentColor" stroke="none"/><path d="M3.5 18h17"/></svg></div>
+        <h3 class="item__name">Instrumented, not guessed at</h3>
+        <div class="item__body">
+          <p>
+            Seven purpose-built metric families plus automatic FastAPI instrumentation, scraped
+            every 15 seconds and rendered by a Grafana dashboard that provisions itself.
+          </p>
+          <dl class="pairs">
+            <div><dt>Cache</dt><dd>cache_hits_total</dd></div>
+            <div><dt>Latency</dt><dd>provider_latency_seconds</dd></div>
+            <div><dt>Rotation</dt><dd>key_switches_total</dd></div>
+            <div><dt>Tokens</dt><dd>tokens_processed_total</dd></div>
+          </dl>
+        </div>
+        <div class="item__meta"><b>core/metrics.py</b>prefixed switchboard_</div>
+      </article>
+
+      <article class="item">
+        <div class="item__ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h8M16 17h4"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg></div>
+        <h3 class="item__name">Admin API &amp; control panel</h3>
+        <div class="item__body">
+          <p>
+            Add, disable and delete keys without a restart, and read live quota state per key.
+            A static control panel ships in the stack on port 3000, proxied to the gateway by nginx.
+          </p>
+          <dl class="pairs">
+            <div><dt>POST</dt><dd>/admin/keys</dd></div>
+            <div><dt>GET</dt><dd>/admin/providers</dd></div>
+            <div><dt>GET</dt><dd>/admin/keys/usage</dd></div>
+            <div><dt>GET</dt><dd>/admin/stats</dd></div>
+          </dl>
+        </div>
+        <div class="item__meta"><b>gateway/admin.py · vis/</b>port 3000</div>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================= ARCHITECTURE ============================= -->
+<section id="architecture" class="band">
+  <div class="wrap">
+    <div class="srail">
+      <span class="srail__n">Architecture</span>
+      <i class="srail__r" aria-hidden="true"></i>
+      <span class="srail__d">6 steps</span>
+    </div>
+    <div class="sec-head">
+      <h2 class="sec-title">One request, end to end.</h2>
+      <p class="lede">
+        Everything inside the dashed boundary is a single FastAPI process. Redis, Prometheus and
+        Grafana are sibling containers; the providers are the only hop that leaves your network.
+      </p>
+    </div>
+
+    <div class="diagram">
+      <!-- shared arrowhead markers: kept in a standalone node so they resolve
+           whichever of the two diagrams is currently displayed -->
+      <svg class="defs-only" width="0" height="0" aria-hidden="true" focusable="false">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="ah-dim" d="M0 0 L10 5 L0 10 z"/>
+          </marker>
+          <marker id="ahh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="ah-hot" d="M0 0 L10 5 L0 10 z"/>
+          </marker>
+          <marker id="aht" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="ah-tel" d="M0 0 L10 5 L0 10 z"/>
+          </marker>
+        </defs>
+      </svg>
+
+      <!-- ---------- wide ---------- -->
+      <svg class="dia--wide" viewBox="0 0 1160 500" role="img" aria-label="Architecture diagram. A client posts to the gateway. The semantic cache checks Redis; a hit returns immediately. On a miss the router consults the key manager in SQLite, calls a provider adapter, and the adapter calls Groq, Google or Anthropic. Prometheus scrapes the gateway metrics endpoint and Grafana reads Prometheus.">
+        <!-- gateway boundary -->
+        <rect class="zone" x="186" y="36" width="642" height="418" rx="8"/>
+        <text class="zone-label" x="204" y="60">SWITCHBOARD GATEWAY · FASTAPI · UVICORN</text>
+
+        <!-- client -->
+        <rect class="node-box" x="16" y="196" width="132" height="88" rx="4"/>
+        <text class="node-t" x="82" y="234" text-anchor="middle">CLIENT</text>
+        <text class="node-s" x="82" y="252" text-anchor="middle">openai sdk · curl</text>
+
+        <!-- redis -->
+        <rect class="node-box" x="212" y="76" width="160" height="76" rx="4"/>
+        <text class="node-t" x="292" y="108" text-anchor="middle">REDIS 7</text>
+        <text class="node-s" x="292" y="126" text-anchor="middle">embeddings + responses</text>
+        <text class="node-s" x="292" y="141" text-anchor="middle">ttl 3600s</text>
+
+        <!-- semantic cache -->
+        <rect class="node-box node-box--key" x="212" y="196" width="160" height="88" rx="4"/>
+        <text class="node-t" x="292" y="230" text-anchor="middle">SEMANTIC CACHE</text>
+        <text class="node-s" x="292" y="248" text-anchor="middle">cosine ≥ 0.90</text>
+        <text class="node-s" x="292" y="263" text-anchor="middle">gemini-embedding-001</text>
+
+        <!-- router -->
+        <rect class="node-box node-box--key" x="418" y="196" width="150" height="88" rx="4"/>
+        <text class="node-t" x="493" y="230" text-anchor="middle">ROUTER</text>
+        <text class="node-s" x="493" y="248" text-anchor="middle">picks best key</text>
+        <text class="node-s" x="493" y="263" text-anchor="middle">retries on 429/401/5xx</text>
+
+        <!-- key manager -->
+        <rect class="node-box" x="402" y="336" width="182" height="84" rx="4"/>
+        <text class="node-t" x="493" y="368" text-anchor="middle">KEY MANAGER</text>
+        <text class="node-s" x="493" y="386" text-anchor="middle">sqlite · fernet encrypted</text>
+        <text class="node-s" x="493" y="401" text-anchor="middle">rate-limit ledger</text>
+
+        <!-- adapter -->
+        <rect class="node-box" x="628" y="196" width="176" height="88" rx="4"/>
+        <text class="node-t" x="716" y="230" text-anchor="middle">PROVIDER ADAPTER</text>
+        <text class="node-s" x="716" y="248" text-anchor="middle">httpx · unified schema</text>
+        <text class="node-s" x="716" y="263" text-anchor="middle">reads x-ratelimit-*</text>
+
+        <!-- providers -->
+        <rect class="node-box" x="856" y="176" width="180" height="128" rx="4"/>
+        <text class="node-t" x="946" y="208" text-anchor="middle">PROVIDERS</text>
+        <text class="node-s" x="946" y="232" text-anchor="middle">groq</text>
+        <text class="node-s" x="946" y="250" text-anchor="middle">google</text>
+        <text class="node-s" x="946" y="268" text-anchor="middle">anthropic</text>
+        <text class="node-s node-s--exit" x="946" y="290" text-anchor="middle">leaves your network</text>
+
+        <!-- telemetry -->
+        <rect class="node-box" x="880" y="364" width="136" height="68" rx="4"/>
+        <text class="node-t" x="948" y="392" text-anchor="middle">PROMETHEUS</text>
+        <text class="node-s" x="948" y="410" text-anchor="middle">scrape 15s</text>
+        <rect class="node-box" x="1032" y="364" width="120" height="68" rx="4"/>
+        <text class="node-t" x="1092" y="392" text-anchor="middle">GRAFANA</text>
+        <text class="node-s" x="1092" y="410" text-anchor="middle">provisioned</text>
+
+        <!-- main flow -->
+        <path class="flow flow--hot" d="M148 240 H 204"  marker-end="url(#ahh)"/>
+        <path class="flow" d="M288 196 V 158" marker-end="url(#ah)"/>
+        <path class="flow" d="M300 152 V 190" marker-end="url(#ah)"/>
+        <path class="flow flow--hot" d="M372 240 H 410" marker-end="url(#ahh)"/>
+        <path class="flow" d="M487 284 V 330" marker-end="url(#ah)"/>
+        <path class="flow" d="M501 330 V 290" marker-end="url(#ah)"/>
+        <path class="flow flow--hot" d="M568 240 H 620" marker-end="url(#ahh)"/>
+        <path class="flow flow--hot" d="M804 240 H 848" marker-end="url(#ahh)"/>
+
+        <!-- cache-hit return -->
+        <path class="flow flow--hit" d="M292 284 C 292 452, 82 452, 82 292" marker-end="url(#ah)"/>
+        <text class="flow-t flow-t--hit" x="187" y="472" text-anchor="middle">Cache hit → return · X-Cache: HIT</text>
+
+        <!-- telemetry flow -->
+        <path class="flow flow--tel" d="M828 398 H 872" marker-end="url(#aht)"/>
+        <path class="flow flow--tel" d="M1016 398 H 1026" marker-end="url(#aht)"/>
+        <text class="flow-t flow-t--tel" x="850" y="386" text-anchor="middle">/metrics</text>
+
+        <!-- step badges -->
+        <g>
+          <circle class="step-c" cx="176" cy="240" r="9"/><text class="step-n" x="176" y="243" text-anchor="middle">1</text>
+          <circle class="step-c" cx="332" cy="174" r="9"/><text class="step-n" x="332" y="177" text-anchor="middle">2</text>
+          <circle class="step-c" cx="391" cy="240" r="9"/><text class="step-n" x="391" y="243" text-anchor="middle">3</text>
+          <circle class="step-c" cx="533" cy="310" r="9"/><text class="step-n" x="533" y="313" text-anchor="middle">4</text>
+          <circle class="step-c" cx="594" cy="240" r="9"/><text class="step-n" x="594" y="243" text-anchor="middle">5</text>
+          <circle class="step-c" cx="826" cy="240" r="9"/><text class="step-n" x="826" y="243" text-anchor="middle">6</text>
+        </g>
+      </svg>
+
+      <!-- ---------- tall / mobile ---------- -->
+      <svg class="dia--tall" viewBox="0 0 380 980" role="img" aria-label="Architecture diagram, vertical layout. Client to semantic cache to Redis, then router to key manager, then provider adapter to Groq, Google or Anthropic. A cache hit returns straight to the client. Prometheus scrapes the gateway and Grafana reads Prometheus.">
+        <rect class="zone" x="58" y="104" width="298" height="520" rx="8"/>
+        <text class="zone-label zone-label--tight" x="70" y="126">SWITCHBOARD GATEWAY</text>
+
+        <rect class="node-box" x="80" y="16" width="240" height="60" rx="4"/>
+        <text class="node-t" x="200" y="42" text-anchor="middle">CLIENT</text>
+        <text class="node-s" x="200" y="60" text-anchor="middle">openai sdk · curl</text>
+
+        <rect class="node-box node-box--key" x="80" y="142" width="240" height="66" rx="4"/>
+        <text class="node-t" x="200" y="170" text-anchor="middle">SEMANTIC CACHE</text>
+        <text class="node-s" x="200" y="188" text-anchor="middle">cosine ≥ 0.90 · gemini</text>
+
+        <rect class="node-box" x="80" y="244" width="240" height="58" rx="4"/>
+        <text class="node-t" x="200" y="270" text-anchor="middle">REDIS 7</text>
+        <text class="node-s" x="200" y="288" text-anchor="middle">ttl 3600s</text>
+
+        <rect class="node-box node-box--key" x="80" y="348" width="240" height="66" rx="4"/>
+        <text class="node-t" x="200" y="376" text-anchor="middle">ROUTER</text>
+        <text class="node-s" x="200" y="394" text-anchor="middle">retries on 429/401/5xx</text>
+
+        <rect class="node-box" x="80" y="450" width="240" height="58" rx="4"/>
+        <text class="node-t" x="200" y="476" text-anchor="middle">KEY MANAGER</text>
+        <text class="node-s" x="200" y="494" text-anchor="middle">sqlite · fernet</text>
+
+        <rect class="node-box" x="80" y="548" width="240" height="60" rx="4"/>
+        <text class="node-t" x="200" y="574" text-anchor="middle">PROVIDER ADAPTER</text>
+        <text class="node-s" x="200" y="592" text-anchor="middle">httpx · x-ratelimit-*</text>
+
+        <rect class="node-box" x="80" y="654" width="240" height="76" rx="4"/>
+        <text class="node-t" x="200" y="682" text-anchor="middle">PROVIDERS</text>
+        <text class="node-s" x="200" y="702" text-anchor="middle">groq · google · anthropic</text>
+        <text class="node-s node-s--exit" x="200" y="719" text-anchor="middle">leaves your network</text>
+
+        <rect class="node-box" x="80" y="810" width="240" height="56" rx="4"/>
+        <text class="node-t" x="200" y="836" text-anchor="middle">PROMETHEUS</text>
+        <text class="node-s" x="200" y="853" text-anchor="middle">scrape 15s</text>
+
+        <rect class="node-box" x="80" y="902" width="240" height="56" rx="4"/>
+        <text class="node-t" x="200" y="928" text-anchor="middle">GRAFANA</text>
+        <text class="node-s" x="200" y="945" text-anchor="middle">provisioned dashboard</text>
+
+        <path class="flow flow--hot" d="M200 76 V 134"  marker-end="url(#ahh)"/>
+        <path class="flow" d="M188 208 V 238" marker-end="url(#ah)"/>
+        <path class="flow" d="M212 238 V 208" marker-end="url(#ah)"/>
+        <path class="flow flow--hot" d="M200 302 V 340" marker-end="url(#ahh)"/>
+        <path class="flow" d="M188 414 V 444" marker-end="url(#ah)"/>
+        <path class="flow" d="M212 444 V 414" marker-end="url(#ah)"/>
+        <path class="flow flow--hot" d="M200 508 V 540" marker-end="url(#ahh)"/>
+        <path class="flow flow--hot" d="M200 608 V 646" marker-end="url(#ahh)"/>
+
+        <path class="flow flow--hit" d="M80 168 H 42 V 46 H 72" marker-end="url(#ah)"/>
+        <text class="flow-t flow-t--hit" x="16" y="108" text-anchor="middle" transform="rotate(-90 16 108)">Cache hit</text>
+
+        <path class="flow flow--tel" d="M58 580 H 34 V 786 H 200 V 802" marker-end="url(#aht)"/>
+        <text class="flow-t flow-t--tel" x="24" y="690" text-anchor="middle" transform="rotate(-90 24 690)">/metrics</text>
+        <path class="flow flow--tel" d="M200 866 V 894" marker-end="url(#aht)"/>
+      </svg>
+    </div>
+
+    <ol class="steps">
+      <li><b>Request arrives</b> FastAPI validates the body against <span class="inline">ChatCompletionRequest</span> — model, messages, temperature, optional provider.</li>
+      <li><b>Cache lookup</b> Messages are joined and embedded, then compared against every stored embedding in Redis by cosine similarity.</li>
+      <li><b>Hit or miss</b> At <span class="inline">≥ 0.90</span> the stored response returns immediately with <span class="inline">X-Cache: HIT</span>. Otherwise the router takes over.</li>
+      <li><b>Key selection</b> The key manager returns the enabled key with the most remaining quota, decrypting it from SQLite only at the moment of use.</li>
+      <li><b>Provider call</b> The adapter sends the request over HTTPX, normalises the reply, and hands back the <span class="inline">x-ratelimit-*</span> headers.</li>
+      <li><b>Settle up</b> Quotas and per-key usage are written back, metrics increment, the response is cached, and the client gets <span class="inline">X-Provider</span> and <span class="inline">X-Latency-Ms</span>.</li>
+    </ol>
+
+    <div class="note note--warn">
+      <b>On failure —</b> a <span class="inline">429</span> marks the key exhausted and moves to the next;
+      a <span class="inline">401</span> disables the key permanently; a <span class="inline">5xx</span> just
+      moves on. Only when every enabled key for that provider has been tried does the caller see a
+      <span class="inline">502</span>. A background sweeper restores keys whose rate-limit window has
+      expired every five seconds.
+    </div>
+  </div>
+</section>
+
+<!-- ============================= TELEMETRY ============================= -->
+<section id="telemetry">
+  <div class="wrap">
+    <div class="srail">
+      <span class="srail__n">Telemetry</span>
+      <i class="srail__r" aria-hidden="true"></i>
+      <span class="srail__d">9 panels</span>
+    </div>
+    <div class="sec-head">
+      <h2 class="sec-title">The dashboard is already built.</h2>
+      <p class="lede">
+        <span class="inline">grafana/dashboards/switchboard.json</span> is provisioned at container
+        start against a Prometheus datasource that is also provisioned. Nothing to click through
+        on first boot — these nine panels are simply there.
+      </p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th scope="col">Panel</th><th scope="col">Type</th><th scope="col">Query</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Cache Hit Rate</td><td>timeseries</td><td><code>rate(switchboard_cache_hits_total[5m]) / (rate(hits[5m]) + rate(misses[5m]))</code></td></tr>
+          <tr><td>Total Request Throughput</td><td>timeseries</td><td><code>rate(http_requests_total{handler="/v1/chat/completions"}[5m])</code></td></tr>
+          <tr><td>Total Requests</td><td>stat</td><td><code>http_requests_total{handler="/v1/chat/completions"}</code></td></tr>
+          <tr><td>Cache Hits</td><td>stat</td><td><code>switchboard_cache_hits_total</code></td></tr>
+          <tr><td>Provider Latency</td><td>timeseries</td><td><code>histogram_quantile(0.50 / 0.95 / 0.99, rate(switchboard_provider_latency_seconds_bucket[5m]))</code></td></tr>
+          <tr><td>Key Switches</td><td>stat</td><td><code>increase(switchboard_key_switches_total[1h])</code></td></tr>
+          <tr><td>Active Keys</td><td>stat</td><td><code>switchboard_active_keys</code></td></tr>
+          <tr><td>Tokens Processed</td><td>timeseries</td><td><code>rate(switchboard_tokens_processed_total[5m])</code></td></tr>
+          <tr><td>Cache Hits vs Misses</td><td>timeseries</td><td><code>rate(switchboard_cache_hits_total[5m]) · rate(switchboard_cache_misses_total[5m])</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="dim">Grafana ships with anonymous viewer access enabled and an admin login of <span class="inline">admin</span> / <span class="inline">switchboard</span> — change both before exposing it.</p>
+  </div>
+</section>
+
+<!-- ============================= QUICKSTART ============================= -->
+<section id="install" class="band">
+  <div class="wrap">
+    <div class="srail">
+      <span class="srail__n">Install</span>
+      <i class="srail__r" aria-hidden="true"></i>
+      <span class="srail__d">6 services</span>
+    </div>
+    <div class="sec-head">
+      <h2 class="sec-title">Clone, run one script, done.</h2>
+      <p class="lede">
+        <span class="inline">setup.sh</span> checks your Docker install, generates the Fernet
+        encryption key, prompts for whichever provider keys you want to seed, writes
+        <span class="inline">.env</span>, brings the stack up, and waits until every service
+        reports healthy. Re-running it is safe — existing values are reused, never overwritten.
+      </p>
+    </div>
+
+    <div class="qs">
+      <div>
+        <div class="code">
+          <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
+<pre><code><span class="t-cmd">git</span> clone https://github.com/sankalp-happy/switchboard.git
+<span class="t-cmd">cd</span> switchboard
+<span class="t-cmd">./setup.sh</span></code></pre>
+        </div>
+        <p class="dim">
+          Docker and Docker Compose v2 are the only prerequisites. Provider keys are optional at
+          install time — add them later from the control panel. Without
+          <span class="inline">GOOGLE_API_KEY</span> the gateway still serves traffic; it just runs
+          with the semantic cache disabled.
+        </p>
+        <div class="hero__cta stack-sm">
+          <a class="btn" href="docs.html#quickstart">
+            Read the full docs
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 8h11M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <div>
+        <div class="svclist">
+          <div><i class="led led--on"></i><span class="n">Gateway API</span><span class="p">:8000</span></div>
+          <div><i class="led led--on"></i><span class="n">Swagger docs</span><span class="p">:8000/docs</span></div>
+          <div><i class="led led--on"></i><span class="n">Control panel</span><span class="p">:3000</span></div>
+          <div><i class="led led--warn"></i><span class="n">Redis</span><span class="p">:6379</span></div>
+          <div><i class="led led--warn"></i><span class="n">Prometheus</span><span class="p">:9090</span></div>
+          <div><i class="led led--warn"></i><span class="n">Grafana</span><span class="p">:3001</span></div>
+        </div>
+        <p class="dim stack-sm">
+          If a port is already taken, setup remaps the service and records the new port in
+          <span class="inline">.env</span> rather than killing whatever holds it.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============================= FOOTER ============================= -->
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot__grid">
+      <div>
+        <div class="foot__brand">SwitchBoard</div>
+        <p class="foot__blurb">
+          A multi-provider LLM operations gateway with semantic caching, automatic key rotation
+          and production-grade observability. Self-hosted, always.
+        </p>
+        <div class="hero__cta stack-md">
+          <a class="btn" href="https://github.com/sankalp-happy/switchboard">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+            sankalp-happy/switchboard
+          </a>
+        </div>
+      </div>
+
+      <div>
+        <h4>Documentation</h4>
+        <ul>
+          <li><a href="docs.html#quickstart">Quickstart</a></li>
+          <li><a href="docs.html#local">Local development</a></li>
+          <li><a href="docs.html#usage">Usage</a></li>
+          <li><a href="docs.html#configuration">Configuration</a></li>
+          <li><a href="docs.html#admin">Admin API</a></li>
+          <li><a href="docs.html#observability">Observability</a></li>
+          <li><a href="docs.html#limits">Limitations</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/sankalp-happy/switchboard/issues">Issues</a></li>
+          <li><a href="https://github.com/sankalp-happy/switchboard/pulls">Pull requests</a></li>
+          <li><a href="https://github.com/sankalp-happy/switchboard/blob/main/README.md">README</a></li>
+          <li><a href="https://github.com/sankalp-happy/switchboard/blob/main/setup.sh">setup.sh</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="foot__bottom">
+      <span>© <span data-year>2026</span> SwitchBoard · v0.2.0</span>
+      <span>No <code>LICENSE</code> file is published. The README states the project is provided as-is for educational and internal use.</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/switchboard.js"></script>
+</body>
+</html>

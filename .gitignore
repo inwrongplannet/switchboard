@@ -50,3 +50,4 @@ data/
 
 # setup.sh failure logs
 setup-failure-*.log
+.gstack/
