@@ -18,10 +18,14 @@ readonly HEALTH_TIMEOUT=150   # seconds to wait for the gateway to answer /healt
 
 # Host ports, as "ENV_VAR:default:label". Each is overridable in .env, so a busy
 # port is remapped rather than fought over. Container-internal ports never change.
+# REDIS_PORT is deliberately absent: Redis is no longer published to the host
+# (see docker-compose.yml), so there is no host port to resolve. Leaving it here
+# would make resolve_ports probe a port nothing binds and, in interactive mode,
+# die if the user declined to remap it — setup refusing to run over a phantom
+# conflict.
 PORT_SPECS=(
     "GATEWAY_PORT:8000:Gateway"
     "ADMIN_UI_PORT:3000:Admin UI"
-    "REDIS_PORT:6379:Redis"
     "PROMETHEUS_PORT:9090:Prometheus"
     "GRAFANA_PORT:3001:Grafana"
 )
@@ -193,6 +197,7 @@ ${BOLD}ON FAILURE${RESET}
 ${BOLD}ENVIRONMENT${RESET}
   ${DIM}Pre-set any of these to skip its prompt (useful with --yes / in CI):${RESET}
   GROQ_API_KEY   GOOGLE_API_KEY   ANTHROPIC_API_KEY   ENCRYPTION_KEY
+  ADMIN_TOKENS   CLIENT_TOKENS    REDIS_PASSWORD
 
 ${BOLD}EXAMPLES${RESET}
   ./setup.sh                              ${DIM}# guided first-time setup${RESET}
@@ -308,6 +313,37 @@ generate_fernet_key() {
 
 is_valid_fernet_key() {
     [[ "$1" =~ ^[A-Za-z0-9_-]{43}=$ ]]
+}
+
+# Auth tokens and the Redis password are opaque high-entropy strings. Unlike a
+# Fernet key they have no required shape, so the same generator serves.
+generate_token() {
+    generate_fernet_key
+}
+
+# Generate-if-absent, keep-if-present. Result lands in ENSURED_SECRET rather
+# than on stdout, because ok() prints there and command substitution would
+# swallow the message into the value.
+#
+# Keeping an existing value is the whole point: regenerating a token on every
+# run would silently lock out every client already holding the old one, and
+# rotating ENCRYPTION_KEY would make the stored provider keys unreadable.
+ENSURED_SECRET=""
+ensure_secret() {
+    local var="$1" label="$2" existing
+    existing="${!var:-$(read_env_value "$var" "$ENV_FILE")}"
+    if [[ -n "$existing" ]]; then
+        upsert_env "$var" "$existing" "$ENV_FILE"
+        ok "$label already set — keeping it $(mask "$existing")"
+    else
+        existing="$(generate_token)"
+        [[ -n "$existing" ]] || die \
+            "Could not generate $label (no openssl, python3, or /dev/urandom)." \
+            "Install OpenSSL, or set $var yourself in $ENV_FILE"
+        upsert_env "$var" "$existing" "$ENV_FILE"
+        ok "Generated $label $(mask "$existing")"
+    fi
+    ENSURED_SECRET="$existing"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -538,6 +574,17 @@ configure() {
         ok "Generated a fresh Fernet encryption key $(mask "$enc_key")"
     fi
 
+    # ── Gateway auth tokens and Redis password ──────────────────────────────
+    # Mandatory: gateway/auth.py refuses to start without ADMIN_TOKENS and
+    # CLIENT_TOKENS, and docker-compose aborts without REDIS_PASSWORD. Both
+    # token settings accept a comma-separated list, so rotation is add-new,
+    # migrate-callers, remove-old rather than a hard cutover.
+    ensure_secret ADMIN_TOKENS  "Admin token"
+    ADMIN_TOKEN_VALUE="$ENSURED_SECRET"
+    ensure_secret CLIENT_TOKENS "Client token"
+    CLIENT_TOKEN_VALUE="$ENSURED_SECRET"
+    ensure_secret REDIS_PASSWORD "Redis password"
+
     # ── Provider keys (all optional) ────────────────────────────────────────
     printf '\n'
     info "Provider API keys are ${BOLD}optional${RESET} — you can also add them later in the Admin UI."
@@ -738,17 +785,31 @@ summary() {
 
     printf '\n'
     row "Gateway API"  "$GATEWAY_URL"                          "OpenAI-compatible endpoint"
-    row "API Docs"     "$GATEWAY_URL/docs"                     "interactive Swagger UI"
+    row "API Docs"     "$GATEWAY_URL/docs"                     "Swagger UI — prompts for the admin token"
     row "Admin UI"     "http://localhost:${ADMIN_UI_PORT}"     "add keys, watch traffic"
     if [[ $MINIMAL -eq 0 ]]; then
         row "Prometheus" "http://localhost:${PROMETHEUS_PORT}" "raw metrics"
         row "Grafana"    "http://localhost:${GRAFANA_PORT}"    "dashboards — admin / switchboard"
     fi
 
+    # Every route except /health now needs a bearer token, so the operator
+    # cannot do anything with the URLs above without seeing these first.
+    local admin_tok client_tok
+    admin_tok="${ADMIN_TOKEN_VALUE:-$(read_env_value ADMIN_TOKENS "$ENV_FILE")}"
+    client_tok="${CLIENT_TOKEN_VALUE:-$(read_env_value CLIENT_TOKENS "$ENV_FILE")}"
+
+    printf '\n  %sYour access tokens%s %s(also in %s)%s\n\n' \
+        "$BOLD" "$RESET" "$DIM" "$ENV_FILE" "$RESET"
+    printf '    %sAdmin%s   %s\n' "$DIM" "$RESET" "$admin_tok"
+    printf '    %s        paste this into the Admin UI to manage keys%s\n' "$DIM" "$RESET"
+    printf '    %sClient%s  %s\n' "$DIM" "$RESET" "$client_tok"
+    printf '    %s        hand this to API callers; it cannot touch /admin%s\n' "$DIM" "$RESET"
+
     printf '\n  %sSend your first request:%s\n\n' "$BOLD" "$RESET"
     printf '%s' "$GREY"
     cat <<EOF
     curl -s $GATEWAY_URL/v1/chat/completions \\
+      -H 'Authorization: Bearer $client_tok' \\
       -H 'Content-Type: application/json' \\
       -d '{"model":"llama-3.1-8b-instant","provider":"groq",
            "messages":[{"role":"user","content":"Say hi in five words."}]}'

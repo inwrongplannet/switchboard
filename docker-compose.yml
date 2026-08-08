@@ -9,7 +9,9 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - SWITCHBOARD_PROVIDER=${SWITCHBOARD_PROVIDER:-groq}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - REDIS_URL=redis://redis:6379/0
+      - ADMIN_TOKENS=${ADMIN_TOKENS}
+      - CLIENT_TOKENS=${CLIENT_TOKENS}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SQLITE_DB_PATH=/app/data/switchboard.db
     depends_on:
       - redis
@@ -19,8 +21,16 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    # Deliberately NOT published to the host. The gateway reaches Redis at
+    # redis:6379 over the compose network; publishing it exposed the semantic
+    # cache — every prompt and every response — to anything that could route
+    # to this machine. Re-adding a ports: mapping here reopens that hole;
+    # scripts/verify-hardening.sh fails if you do.
+    #
+    # The :? form makes Compose abort with a named error rather than
+    # substituting empty, which would produce `redis-server --requirepass`
+    # with a missing argument and a container that exits on startup.
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required - run ./setup.sh to generate one}
 
   admin-ui:
     build: ./vis

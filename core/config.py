@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     ENCRYPTION_KEY: str = ""
 
+    # Gateway auth. Both are comma-separated so a token can be rotated without
+    # a coordinated cutover: add the new one, migrate callers, drop the old.
+    # Empty means the gateway refuses to start — see gateway/auth.py.
+    # Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    ADMIN_TOKENS: str = ""      # guards /admin/* and the OpenAPI docs routes
+    CLIENT_TOKENS: str = ""     # guards /v1/*; admin tokens work here too
+
     class Config:
         env_file = ".env"
         extra = "allow"
