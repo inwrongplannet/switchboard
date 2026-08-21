@@ -173,6 +173,37 @@ else
     pass "No Access-Control-Allow-Credentials sent to a cross-origin request"
 fi
 
+# ---- 9. Grafana requires a login ----------------------------------------
+#
+# Static check first: the compose file is the only place anonymous access can
+# come back from, and it is a one-line edit. The live check below only runs if
+# Grafana is actually up, so --minimal stacks don't fail here.
+if grep -qE '^[[:space:]]*-[[:space:]]*GF_AUTH_ANONYMOUS_ENABLED=true' docker-compose.yml 2>/dev/null; then
+    fail "docker-compose.yml re-enables Grafana anonymous access" \
+         "Remove GF_AUTH_ANONYMOUS_ENABLED=true from the grafana service."
+else
+    pass "docker-compose.yml does not enable Grafana anonymous access"
+fi
+
+if grep -qE '^[[:space:]]*-[[:space:]]*GF_SECURITY_ADMIN_PASSWORD=[^$]' docker-compose.yml 2>/dev/null; then
+    fail "Grafana admin password is hardcoded in docker-compose.yml" \
+         "Use \${GRAFANA_ADMIN_PASSWORD:?...} and let ./setup.sh generate it."
+else
+    pass "Grafana admin password comes from the environment, not the compose file"
+fi
+
+GRAFANA_PORT="${GRAFANA_PORT:-$(read_env_value GRAFANA_PORT)}"
+GRAFANA_PORT="${GRAFANA_PORT:-3001}"
+GRAFANA_BASE="http://localhost:${GRAFANA_PORT}"
+# /api/search is 200 for an anonymous viewer and 401 when a login is required.
+gf_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${GRAFANA_BASE}/api/search" 2>/dev/null)"
+case "$gf_code" in
+    401)  pass "Grafana requires a login (/api/search returns 401)" ;;
+    000)  printf '  %s- skipped live Grafana check (nothing listening on %s)%s\n' "$DIM" "$GRAFANA_PORT" "$RESET" ;;
+    *)    fail "Grafana /api/search returned ${gf_code}, expected 401" \
+               "Anyone who reaches port ${GRAFANA_PORT} can read every dashboard." ;;
+esac
+
 # ---- summary -------------------------------------------------------------
 printf '\n'
 if [[ $FAIL -eq 0 ]]; then

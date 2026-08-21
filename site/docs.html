@@ -252,11 +252,12 @@ GROQ_API_KEY=gsk_... <span class="t-cmd">./setup.sh</span> --yes</code></pre>
 <pre><code><span class="t-cmd">curl</span> http://localhost:8000/health
 <span class="t-com"># {"status":"ok","version":"0.2.0"}</span></code></pre>
       </div>
-      <div class="note note--warn">
-        <b>Grafana credentials</b> are <span class="inline">admin</span> /
-        <span class="inline">switchboard</span>, set in
-        <span class="inline">docker-compose.yml</span>, with anonymous viewer access enabled.
-        Change both before putting Grafana on a network anyone else can reach.
+      <div class="note">
+        <b>Grafana credentials</b> are <span class="inline">admin</span> plus the password
+        <span class="inline">setup.sh</span> generates into <span class="inline">.env</span> as
+        <span class="inline">GRAFANA_ADMIN_PASSWORD</span> and prints in its summary. Anonymous
+        viewing is disabled, and <span class="inline">docker compose up</span> refuses to start
+        if the password is unset.
       </div>
     </section>
 

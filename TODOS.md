@@ -14,18 +14,6 @@
 **Priority:** P2
 **Depends on:** None
 
-### Remove Grafana anonymous access and hardcoded credentials
-
-**What:** Drop `GF_AUTH_ANONYMOUS_ENABLED=true` and replace the hardcoded `admin`/`switchboard` login with generated credentials.
-
-**Why:** Grafana is published on `:3001` with anonymous viewing enabled and an admin password committed to git history. Anyone who reaches that port sees every dashboard; anyone who reads the repo has the admin password.
-
-**Context:** `docker-compose.yml:43-57`, specifically lines 48-51. Dashboards are provisioned read-only from `./grafana/dashboards`, so removing anonymous access costs nothing operationally beyond a login. `setup.sh` gains secret-generation helpers in the auth PR (`generate_*`, `upsert_env`, `mask`) — extend those to produce `GF_SECURITY_ADMIN_PASSWORD` the same way. Do this after the auth PR so that machinery already exists.
-
-**Effort:** S
-**Priority:** P2
-**Depends on:** Gateway auth PR (for the `setup.sh` secret-generation pattern)
-
 ### Narrow the compose bind-mount so `.env` is not inside the container
 
 **What:** Replace `volumes: - .:/app` with a dev/prod compose split so the production gateway container does not mount the whole repo.

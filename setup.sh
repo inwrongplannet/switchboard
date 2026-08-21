@@ -585,6 +585,12 @@ configure() {
     CLIENT_TOKEN_VALUE="$ENSURED_SECRET"
     ensure_secret REDIS_PASSWORD "Redis password"
 
+    # Grafana's admin password. Generated even in --minimal mode, because
+    # Compose interpolates the whole file regardless of which services start,
+    # so an unset value aborts `up` on the :? in docker-compose.yml.
+    ensure_secret GRAFANA_ADMIN_PASSWORD "Grafana admin password"
+    GRAFANA_PASSWORD_VALUE="$ENSURED_SECRET"
+
     # ── Provider keys (all optional) ────────────────────────────────────────
     printf '\n'
     info "Provider API keys are ${BOLD}optional${RESET} — you can also add them later in the Admin UI."
@@ -789,7 +795,7 @@ summary() {
     row "Admin UI"     "http://localhost:${ADMIN_UI_PORT}"     "add keys, watch traffic"
     if [[ $MINIMAL -eq 0 ]]; then
         row "Prometheus" "http://localhost:${PROMETHEUS_PORT}" "raw metrics"
-        row "Grafana"    "http://localhost:${GRAFANA_PORT}"    "dashboards — admin / switchboard"
+        row "Grafana"    "http://localhost:${GRAFANA_PORT}"    "dashboards — log in as admin"
     fi
 
     # Every route except /health now needs a bearer token, so the operator
@@ -804,6 +810,12 @@ summary() {
     printf '    %s        paste this into the Admin UI to manage keys%s\n' "$DIM" "$RESET"
     printf '    %sClient%s  %s\n' "$DIM" "$RESET" "$client_tok"
     printf '    %s        hand this to API callers; it cannot touch /admin%s\n' "$DIM" "$RESET"
+    if [[ $MINIMAL -eq 0 ]]; then
+        local grafana_pw
+        grafana_pw="${GRAFANA_PASSWORD_VALUE:-$(read_env_value GRAFANA_ADMIN_PASSWORD "$ENV_FILE")}"
+        printf '    %sGrafana%s %s\n' "$DIM" "$RESET" "$grafana_pw"
+        printf '    %s        log in at :%s as admin with this%s\n' "$DIM" "$GRAFANA_PORT" "$RESET"
+    fi
 
     printf '\n  %sSend your first request:%s\n\n' "$BOLD" "$RESET"
     printf '%s' "$GREY"

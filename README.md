@@ -106,6 +106,10 @@ waits until every service reports healthy.
 It is safe to re-run. Existing `.env` values are reused (never overwritten), and the file
 is backed up only when something actually changes.
 
+**Upgrading an existing checkout?** `GRAFANA_ADMIN_PASSWORD` is now required — a bare
+`docker compose up` aborts with a named error until it is set. Re-run `./setup.sh` to
+generate it; every value already in your `.env` is kept as-is.
+
 | Flag                | Effect                                                       |
 | ------------------- | ------------------------------------------------------------ |
 | `--minimal`         | Gateway + Redis + Admin UI only (skips Prometheus & Grafana)  |
@@ -162,7 +166,8 @@ docker compose up --build
 | Prometheus      | http://localhost:9090         |
 | Grafana         | http://localhost:3001         |
 
-Grafana default credentials: `admin` / `switchboard`
+Grafana logs in as `admin` with the password `setup.sh` generates into `.env` as
+`GRAFANA_ADMIN_PASSWORD` and prints in the summary. Anonymous dashboard access is off.
 
 ---
 
@@ -325,7 +330,7 @@ The gateway auto-exposes metrics at `/metrics`. Key counters and histograms:
 
 ### Grafana
 
-A pre-built dashboard is provisioned automatically when running via Docker Compose. Access it at [http://localhost:3001](http://localhost:3001).
+A pre-built dashboard is provisioned automatically when running via Docker Compose. Access it at [http://localhost:3001](http://localhost:3001) and log in as `admin` with `GRAFANA_ADMIN_PASSWORD` from `.env`.
 
 ---
 
@@ -421,6 +426,7 @@ automatically, remapping any that are already in use; set them yourself to pin a
 | `GATEWAY_PORT`     | `8000`  | Gateway    |
 | `ADMIN_UI_PORT`    | `3000`  | Admin UI   |
 | `REDIS_PASSWORD`   | generated | Redis auth — required by docker compose |
+| `GRAFANA_ADMIN_PASSWORD` | generated | Grafana admin login — required by docker compose |
 | `PROMETHEUS_PORT`  | `9090`  | Prometheus |
 | `GRAFANA_PORT`     | `3001`  | Grafana    |
 
