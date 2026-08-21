@@ -38,7 +38,6 @@ async def setup_db():
     await db.execute("DELETE FROM api_keys")
     await db.execute("DELETE FROM provider_config")
     await db.commit()
-    await db.close()
     yield
 
 
@@ -162,7 +161,6 @@ async def test_get_available_key_picks_highest_remaining(km):
         "UPDATE api_keys SET rate_limit_remaining_tokens = ? WHERE id = ?", (9000, id2)
     )
     await db.commit()
-    await db.close()
 
     api_key, key_id = await km.get_available_key("groq")
     assert api_key == "gsk_high"
@@ -181,7 +179,6 @@ async def test_mark_key_exhausted(km):
         "SELECT rate_limit_remaining_tokens FROM api_keys WHERE id = ?", (key_id,)
     )
     row = await cursor.fetchone()
-    await db.close()
     assert row["rate_limit_remaining_tokens"] == 0
 
 
@@ -200,7 +197,6 @@ async def test_update_rate_limits(km):
     db = await get_db()
     cursor = await db.execute("SELECT * FROM api_keys WHERE id = ?", (key_id,))
     row = await cursor.fetchone()
-    await db.close()
     assert row["rate_limit_remaining_tokens"] == 4500
     assert row["rate_limit_remaining_requests"] == 22
     assert row["last_used_at"] is not None
