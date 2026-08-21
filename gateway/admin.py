@@ -6,15 +6,25 @@ Mounted at /admin in the gateway.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.key_manager import key_manager
 from core.database import get_usage_stats
+from gateway.auth import require_admin
 
 logger = logging.getLogger("switchboard.admin")
 
-admin_router = APIRouter(prefix="/admin", tags=["admin"])
+# The guard is declared on the router itself, not on the include_router() call
+# in main.py, so it travels with the routes. Any remount, copy, or direct
+# import of admin_router carries authentication with it — a guard attached at
+# the mount site can be silently dropped by a future refactor, which is exactly
+# the hole this module is being hardened against.
+admin_router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 # ---- request/response models ----

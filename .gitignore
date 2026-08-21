@@ -43,6 +43,7 @@ skills-lock.json
 # Project specific
 .agents/
 AGENTS.md
+TODO.md
 
 # Data directory (SQLite DB)
 data/

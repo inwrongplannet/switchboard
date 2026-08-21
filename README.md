@@ -125,7 +125,7 @@ kills another process — including Docker itself, which owns every published po
 ▲ Gateway moved to port 8001 (saved in .env).
 ```
 
-The chosen ports are written to `.env` as `GATEWAY_PORT`, `ADMIN_UI_PORT`, `REDIS_PORT`,
+The chosen ports are written to `.env` as `GATEWAY_PORT`, `ADMIN_UI_PORT`,
 `PROMETHEUS_PORT` and `GRAFANA_PORT`, and the summary prints the real URLs. They persist
 across runs so your URLs stay stable — edit `.env` to move a service back.
 
@@ -199,7 +199,23 @@ export GOOGLE_API_KEY="AIza..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 export ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
 export REDIS_URL="redis://localhost:6379/0"
+
+# Required. The gateway refuses to start without these — an unset token must
+# never silently mean "no authentication". setup.sh generates them for you on
+# the Docker path; on this path, generate them yourself:
+export ADMIN_TOKENS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export CLIENT_TOKENS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+# Print them — you will need the admin token to unlock the dashboard.
+echo "admin:  $ADMIN_TOKENS"
+echo "client: $CLIENT_TOKENS"
 ```
+
+**Authentication.** Every route except `/health` requires a bearer token.
+`ADMIN_TOKENS` guards `/admin/*` and `/openapi.json` and also works on `/v1/*`;
+`CLIENT_TOKENS` guards `/v1/*` only, so a client token can never read or modify
+your provider keys. Both accept a comma-separated list, so you can rotate
+without downtime: add the new token, migrate callers, then remove the old one.
 
 ### 5. Run the gateway
 
@@ -217,6 +233,7 @@ SwitchBoard exposes an OpenAI-compatible endpoint, so any standard OpenAI client
 
 ```bash
 curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer $CLIENT_TOKENS" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.1-8b-instant",
@@ -283,6 +300,7 @@ All admin endpoints are mounted under `/admin`. Full interactive docs are availa
 
 ```bash
 curl -X POST http://localhost:8000/admin/keys \
+  -H "Authorization: Bearer $ADMIN_TOKENS" \
   -H "Content-Type: application/json" \
   -d '{"provider": "groq", "api_key": "gsk_...", "label": "personal-key"}'
 ```
@@ -381,6 +399,9 @@ switchboard/
 | Variable          | Required | Default                    | Description                                      |
 | ----------------- | -------- | -------------------------- | ------------------------------------------------ |
 | `ENCRYPTION_KEY`  | Yes      | —                          | Fernet key for encrypting API keys at rest        |
+| `ADMIN_TOKENS`    | Yes      | —                          | Comma-separated. Guards `/admin/*` + `/openapi.json`; also valid on `/v1/*` |
+| `CLIENT_TOKENS`   | Yes      | —                          | Comma-separated. Guards `/v1/*` only              |
+| `REDIS_PASSWORD`  | Yes      | —                          | Redis `requirepass`; required by docker compose   |
 | `GROQ_API_KEY`    | No       | `""`                       | Default Groq key (can also add via Admin API)     |
 | `GOOGLE_API_KEY`  | No       | `""`                       | Google AI key for embedding generation            |
 | `ANTHROPIC_API_KEY` | No     | `""`                       | Anthropic API key for provider routing            |
@@ -399,7 +420,7 @@ automatically, remapping any that are already in use; set them yourself to pin a
 | ------------------ | ------- | ---------- |
 | `GATEWAY_PORT`     | `8000`  | Gateway    |
 | `ADMIN_UI_PORT`    | `3000`  | Admin UI   |
-| `REDIS_PORT`       | `6379`  | Redis      |
+| `REDIS_PASSWORD`   | generated | Redis auth — required by docker compose |
 | `PROMETHEUS_PORT`  | `9090`  | Prometheus |
 | `GRAFANA_PORT`     | `3001`  | Grafana    |
 
