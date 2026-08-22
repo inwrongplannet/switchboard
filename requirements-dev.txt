@@ -1,0 +1,12 @@
+# Development and test dependencies.
+#
+#   pip install -r requirements-dev.txt
+#
+# pulls the runtime set in as well, so this one file is all a contributor needs.
+# The Dockerfile deliberately installs requirements.txt only, keeping pytest out
+# of the production image.
+
+-r requirements.txt
+
+pytest==8.1.1
+pytest-asyncio==0.23.8

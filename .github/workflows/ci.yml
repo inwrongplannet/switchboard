@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege. Nothing here writes to the repo, so nothing here needs write.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 matches the Dockerfile's base image, so it is what actually ships.
+        # 3.12 catches forward-compatibility breaks before they bite anyone.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # Install from the requirements files, never from an inline package list.
+      # This is what makes the job a regression test for the requirements.txt /
+      # requirements-dev.txt split: if the split breaks a fresh contributor
+      # install, it breaks here first.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # No GOOGLE_API_KEY, no Redis. pytest.ini's addopts excludes the
+      # integration tier, so this is the same command a contributor runs.
+      - name: Run tests
+        run: pytest -v
+
+      - name: Integration tier is collectable
+        # Not run for real (fork PRs never get secrets), but a syntax error or a
+        # bad marker in that tier should still fail the build rather than hide.
+        run: pytest -m integration --collect-only -q
+
+  docs-drift:
+    name: docs consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # README.md is canonical. site/docs.html duplicates several of its sections,
+      # and they have drifted before: the README shipped a literal "<your-org>"
+      # placeholder in its clone command while the site had the real URL. An HTML
+      # comment saying "README is canonical" is not enforcement. This is.
+      - name: README has no unresolved placeholders
+        run: |
+          if grep -nE '<your-org>|<your-username>|YOUR_ORG|TODO:|FIXME:' README.md; then
+            echo "::error file=README.md::README contains an unresolved placeholder"
+            exit 1
+          fi
+
+      - name: Clone URL agrees between README and docs site
+        run: |
+          readme_url=$(grep -oE 'https://github\.com/[A-Za-z0-9._-]+/switchboard\.git' README.md | head -1)
+          docs_url=$(grep -oE 'https://github\.com/[A-Za-z0-9._-]+/switchboard\.git' site/docs.html | head -1)
+          echo "README:    ${readme_url:-<none found>}"
+          echo "docs.html: ${docs_url:-<none found>}"
+          if [ -z "$readme_url" ] || [ -z "$docs_url" ]; then
+            echo "::error::could not find a clone URL in one of the two files"
+            exit 1
+          fi
+          if [ "$readme_url" != "$docs_url" ]; then
+            echo "::error::clone URL has drifted between README.md and site/docs.html"
+            exit 1
+          fi
+
+      - name: Version agrees between VERSION, README and docs site
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          echo "VERSION: $version"
+          for f in README.md site/docs.html CHANGELOG.md; do
+            if ! grep -q "$version" "$f"; then
+              echo "::error file=$f::does not mention version $version"
+              exit 1
+            fi
+          done
+
+      - name: Every path named in README's Project Structure exists
+        run: |
+          fail=0
+          # Pull the fenced block under "## Project Structure", strip the trailing
+          # `# comment` off each line, then take only the entry that follows a tree
+          # connector. Matching bare paths anywhere on the line picks up fragments
+          # out of the comments ("3.11/3.12" -> "11/", "/admin/*" -> "admin/").
+          awk '/^## Project Structure/{f=1} f&&/^```$/{n++} f&&n==2{exit} f' README.md \
+            | sed 's/#.*//' \
+            | grep -oE '(├──|└──) [A-Za-z0-9_.-]+/?' \
+            | sed -E 's/^(├──|└──) //' | sort -u > /tmp/claimed.txt
+          echo "checking $(wc -l < /tmp/claimed.txt | tr -d ' ') paths named in README"
+          while read -r p; do
+            [ -z "$p" ] && continue
+            if ! find . -path ./.git -prune -o -name "${p%/}" -print -quit | grep -q .; then
+              echo "::error file=README.md::Project Structure names '$p' which does not exist"
+              fail=1
+            fi
+          done < /tmp/claimed.txt
+          exit $fail
+
+  docker:
+    name: docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Dockerfile does `COPY . .` and installs from requirements.txt. Nothing
+      # verified the image still built after a dependency change until now.
+      - name: Build gateway image
+        run: docker build -t switchboard-ci:${{ github.sha }} .
+
+      # The whole point of splitting requirements-dev.txt is that the production
+      # image does not ship a test runner. Assert it, rather than trusting it.
+      - name: Production image has no test runner
+        run: |
+          if docker run --rm switchboard-ci:${{ github.sha }} pip show pytest 2>/dev/null | grep -q '^Name:'; then
+            echo "::error::pytest is present in the production image — check the Dockerfile installs requirements.txt only"
+            exit 1
+          fi
+          echo "confirmed: no pytest in the production image"
+
+      - name: Image does not contain .env
+        run: |
+          if docker run --rm --entrypoint sh switchboard-ci:${{ github.sha }} -c 'ls -a /app/.env' 2>/dev/null; then
+            echo "::error::.env was baked into the image — check .dockerignore"
+            exit 1
+          fi
+          echo "confirmed: no .env in the image"

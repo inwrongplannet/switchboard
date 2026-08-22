@@ -1,17 +1,39 @@
+# Runtime dependencies for the gateway. Test-only packages live in
+# requirements-dev.txt so the production image does not ship a test runner.
+#
+# Versions are pinned exactly. This is deployable application code, not a
+# library, so reproducibility beats flexibility: a contributor's install
+# resolves to the same versions CI tested against. Dependabot (see
+# .github/dependabot.yml) proposes the upgrades.
+
+# --- Web framework -----------------------------------------------------------
 fastapi==0.110.0
 uvicorn==0.29.0
+
+# --- HTTP client -------------------------------------------------------------
+# Every provider adapter talks to its upstream over httpx directly. There is no
+# vendor SDK dependency here on purpose: providers/groq_provider.py and
+# providers/google_provider.py both use the vendors' OpenAI-compatible REST
+# endpoints, and providers/anthropic_provider.py translates to /v1/messages.
+httpx==0.28.1
+
+# --- Cache -------------------------------------------------------------------
 redis==5.0.3
-groq==0.15.0
-pytest==8.1.1
-httpx>=0.28.1
-pydantic>=2.9.0
-pydantic-settings>=2.2.1
-streamlit
-requests
+
+# --- Schemas / settings ------------------------------------------------------
+pydantic==2.13.4
+pydantic-settings==2.15.0
+
+# --- Embeddings (semantic cache; optional at runtime) ------------------------
+# Without GOOGLE_API_KEY the cache disables itself and requests are still
+# served, but the package is imported at module load so it is not optional here.
 google-genai==1.64.0
 numpy==2.4.2
-aiosqlite>=0.20.0
-cryptography>=42.0.0
-prometheus-client>=0.20.0
-prometheus-fastapi-instrumentator>=7.0.0
-pytest-asyncio>=0.23.0
+
+# --- Storage / crypto --------------------------------------------------------
+aiosqlite==0.22.1
+cryptography==50.0.0
+
+# --- Observability -----------------------------------------------------------
+prometheus-client==0.26.0
+prometheus-fastapi-instrumentator==7.1.0

@@ -1,4 +1,18 @@
 <!DOCTYPE html>
+<!--
+  README.md is canonical. This page duplicates several of its sections (Prerequisites,
+  Quickstart, Local development, Usage, Configuration, Admin API, Observability,
+  Architecture, Testing, Project structure) because a marketing site and a GitHub README
+  want different presentation for the same facts.
+
+  Duplication means drift, and it has already happened once: the README shipped a literal
+  "<your-org>" placeholder in its clone command while this page had the real URL. So the
+  agreement is enforced rather than requested — .github/workflows/ci.yml fails the build
+  if the clone URL or the version disagrees between the two files.
+
+  If you change setup steps, ports, endpoints, or the version here, make the matching
+  change in README.md in the same commit.
+-->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -250,7 +264,7 @@ GROQ_API_KEY=gsk_... <span class="t-cmd">./setup.sh</span> --yes</code></pre>
       <div class="code">
         <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
 <pre><code><span class="t-cmd">curl</span> http://localhost:8000/health
-<span class="t-com"># {"status":"ok","version":"0.2.0"}</span></code></pre>
+<span class="t-com"># {"status":"ok","version":"0.2.0","cache":"ok"}</span></code></pre>
       </div>
       <div class="note">
         <b>Grafana credentials</b> are <span class="inline">admin</span> plus the password
@@ -300,7 +314,7 @@ GROQ_API_KEY=gsk_... <span class="t-cmd">./setup.sh</span> --yes</code></pre>
       <h4>2 · Dependencies</h4>
       <div class="code">
         <div class="code__bar"><span class="code__lang">bash</span><button class="code__copy" type="button">Copy</button></div>
-<pre><code><span class="t-cmd">pip</span> install -r requirements.txt</code></pre>
+<pre><code><span class="t-cmd">pip</span> install -r requirements-dev.txt</code></pre>
       </div>
 
       <h4>3 · Redis</h4>
@@ -860,6 +874,7 @@ response = client.chat.completions.<span class="t-fn">create</span>(
 ├── docker-compose.yml
 ├── Dockerfile
 ├── requirements.txt
+├── requirements-dev.txt
 └── setup.sh</code></pre>
       </div>
     </section>

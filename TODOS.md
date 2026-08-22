@@ -14,6 +14,35 @@
 **Priority:** P2
 **Depends on:** Gateway auth PR (caller identity)
 
+### Isolate the semantic cache per caller
+
+**What:** Namespace cache entries by caller identity so one client token cannot receive
+another's cached response.
+
+**Why:** `CLIENT_TOKENS` is a comma-separated list by design — `.env.example` describes
+handing individual entries to different API callers. But the cache does not know who is
+asking. `cache/redis_client.py:55` builds the key from `model + temperature + messages`
+with no caller component, and it would not matter if it did: `get_cached_response` at
+`:72` runs `KEYS nexus:cache:*` and returns the best cosine match above 0.9 from the
+**entire** keyspace, ignoring key structure completely. `gateway/main.py:245` calls it
+with only the request — `require_client` has already run at `:234` but the token is never
+threaded through. So in any deployment with more than one client token, caller B asking
+something semantically close to caller A's prompt receives A's response.
+
+**Context:** The fix is to pass the authenticated caller through from `require_client`
+into the cache and scope both the write key and the scan to `nexus:cache:{caller_hash}:*`.
+Hash the token rather than storing it. This touches the same two functions as the
+keyspace-scan item below, so the two are cheaper done together than separately — and
+namespacing the scan shrinks it, which partially addresses that item as a side effect.
+
+Decided on 2026-08-22 to ship v0.2.0 with this documented here rather than fixed, and
+without a README disclosure. Revisit before recommending SwitchBoard for any deployment
+serving more than one caller.
+
+**Effort:** M
+**Priority:** P1
+**Depends on:** None
+
 ## Performance
 
 ### Replace the semantic cache keyspace scan with a vector index
@@ -30,4 +59,77 @@ Two increments, in order:
 
 **Effort:** S (step 1) / L (step 2)
 **Priority:** P2
+**Depends on:** None
+
+## Testing
+
+### Raise provider adapter and gateway coverage
+
+**What:** Add tests for the three provider adapters and the completions endpoint.
+
+**Why:** Coverage is uneven in exactly the wrong place. `gateway/auth.py` is at 100% and
+`core/` sits between 82% and 100%, but `providers/anthropic_provider.py` is at 24%,
+`providers/google_provider.py` and `providers/groq_provider.py` are at 30%, and
+`gateway/main.py` is at 47%. Overall 68%. The untested surface is the provider error and
+retry handling that automatic failover depends on — the reliability claim the README
+leads with rests on the three least-tested files in the repo.
+
+**Context:** Measured with `pytest --cov` on 2026-08-22 at commit 2cd90b0. The adapters
+all talk to their upstreams over `httpx`, so `httpx.MockTransport` gives real code-path
+coverage without mocking the adapters themselves — `tests/test_token_exhaustion.py` is a
+worked example of that pattern. Start with the non-200 branches in each adapter
+(`groq_provider.py:78`, `google_provider.py:85`, `anthropic_provider.py:106` are the
+missing-key guards) and the 429/401 handling in `routing/router.py:127-141`.
+
+Good first contribution: well-scoped, no credentials needed, obvious success criterion.
+
+**Effort:** M
+**Priority:** P2
+**Depends on:** None
+
+### Verify the OpenAI compatibility contract
+
+**What:** Test `/v1/chat/completions` against what an OpenAI client actually expects.
+
+**Why:** "OpenAI-Compatible API" is the first bullet in the README and the strongest
+adoption claim the project makes, and nothing verifies it. Nothing covers streaming,
+tool or function calls, error-payload shape, the full `usage` object, or what happens
+when a client sends a parameter the gateway does not model. One concrete gap is already
+known: `core/schemas.py:12` accepts `stream`, but `providers/groq_provider.py:23` and
+`providers/google_provider.py:29` force it to `False`, so a client requesting a stream
+gets a complete response and no error — a silent contract violation.
+
+**Context:** The README's Limitations section now scopes the claim honestly, so this is
+not urgent, but the gap between "works with the OpenAI SDK" and "implements the OpenAI
+API" is where adopter trust is lost. Two increments: first make unsupported parameters
+fail loudly instead of silently (small, and strictly better than today), then decide
+whether streaming is worth implementing — it needs SSE handling in every adapter plus a
+pass-through path that skips the cache.
+
+**Effort:** S (fail loudly) / L (implement streaming)
+**Priority:** P2
+**Depends on:** None
+
+## Infrastructure
+
+### Run the gateway container as a non-root user
+
+**What:** Add a `USER` directive to the Dockerfile.
+
+**Why:** The gateway container runs as root. Any container security scanner run against a
+public repo flags it, and it is the standard hardening step this project has not taken.
+
+**Context:** Deliberately deferred during the open-source release review on 2026-08-22,
+for a concrete reason worth recording: `Dockerfile:5` does `mkdir -p /app/data` and
+`docker-compose.yml` mounts the named volume `switchboard-data` there. Adding a `USER`
+without giving that user ownership of the volume breaks `docker compose up` for anyone
+with an existing volume, because named-volume contents keep the ownership they were
+created with. The change is a `RUN adduser` plus `chown` plus `USER`, but it needs
+testing against both a fresh volume and a pre-existing one before it can land.
+
+Note that `.github/dependabot.yml` does not track the base-image digest pin added in
+0.2.0, so that pin needs a manual bump periodically regardless.
+
+**Effort:** S
+**Priority:** P3
 **Depends on:** None
