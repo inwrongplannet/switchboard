@@ -2,6 +2,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.openapi.utils import get_openapi
 from contextlib import asynccontextmanager
+from pathlib import Path
 import asyncio
 import logging
 
@@ -20,6 +21,17 @@ from gateway.auth import require_admin, require_client
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("switchboard.gateway")
+
+# The VERSION file is the single source of truth for the release number: it is
+# what /health reports, what CHANGELOG.md documents, and what CI asserts the
+# README and docs site agree with. Previously this was a string literal here,
+# which is exactly the kind of thing that silently drifts one release later.
+# Falls back rather than raising — a missing VERSION file must not take the
+# gateway down over a cosmetic field.
+try:
+    VERSION = (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip()
+except OSError:  # pragma: no cover - only reachable on a broken install
+    VERSION = "unknown"
 
 # Reported by /health. Set once at startup by the Redis probe below.
 #
@@ -286,7 +298,7 @@ async def health_check():
     The `cache` field is how a human or a monitor sees that Redis is down —
     previously that state was completely invisible.
     """
-    return {"status": "ok", "version": "0.2.0", "cache": _cache_status}
+    return {"status": "ok", "version": VERSION, "cache": _cache_status}
 
 
 if __name__ == "__main__":

@@ -45,3 +45,38 @@ data/
 # Project-specific, not needed in the image
 .agents/
 skills-lock.json
+
+# Not part of the running gateway. This file scopes to the gateway build only —
+# the dashboard image builds from ./vis as its own context (docker-compose.yml:46),
+# so nothing here affects it.
+#
+# Same reasoning as splitting requirements-dev.txt out of requirements.txt: the
+# production image should contain the service and nothing else. CI asserts both
+# (see .github/workflows/ci.yml, "Production image has no test runner").
+tests/
+requirements-dev.txt
+pytest.ini
+scripts/
+site/
+grafana/
+prometheus/
+.github/
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+CHANGELOG.md
+TODOS.md
+
+# The dashboard builds from ./vis as its own context, so the gateway image has no
+# use for these. setup.sh runs on the host.
+vis/
+setup.sh
+pyrightconfig.json
+
+# Local developer files. These are gitignored, so a CI build from a clean checkout
+# never sees them — but `COPY . .` on a developer's machine reads the working tree,
+# not the index, and would otherwise bake them into the image.
+AGENTS.md
+setup-failure-*.log
+.env.backup.*
+.env.snapshot.*
