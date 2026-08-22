@@ -1,0 +1,91 @@
+name: Bug report
+description: Something does not work the way the docs say it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report.
+
+        **Do not use this form for security vulnerabilities.** Use
+        [private vulnerability reporting](https://github.com/sankalp-happy/switchboard/security/advisories/new)
+        instead — a public issue tells everyone running SwitchBoard about the hole
+        at the same moment it tells us.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect instead?
+      placeholder: |
+        I sent a completion request with "provider": "anthropic" and got a 500.
+        I expected it to route to Anthropic.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: A curl command or a short script beats a description.
+      render: bash
+      placeholder: |
+        curl -X POST http://localhost:8000/v1/chat/completions \
+          -H "Authorization: Bearer $CLIENT_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"model":"llama-3.1-8b-instant","messages":[{"role":"user","content":"hi"}]}'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-running
+    attributes:
+      label: How are you running SwitchBoard?
+      options:
+        - Docker Compose via ./setup.sh
+        - Docker Compose, edited by hand
+        - Locally with uvicorn, no Docker
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: "`curl -s localhost:8000/health` reports the version, or paste a commit SHA."
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which provider is involved?
+      multiple: true
+      options:
+        - Groq
+        - Google
+        - Anthropic
+        - Not provider-specific
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`docker compose logs gateway`, or the uvicorn output."
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have removed API keys, tokens, and `.env` values from everything I pasted above
+          required: true
+        - label: This is not a security vulnerability
+          required: true

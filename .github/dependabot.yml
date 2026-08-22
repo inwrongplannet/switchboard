@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # requirements.txt is pinned exactly for reproducibility, which only works if
+  # something proposes the upgrades. That something is this.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      # One PR for the routine churn; security and major bumps still arrive alone.
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Actions pinned in ci.yml go stale the same way Python packages do, and a stale
+  # action is a supply-chain surface. Easy to forget, so watch it too.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  # Note: Dependabot does not track the digest pin on the Dockerfile's base image.
+  # That is tracked as a P3 in TODOS.md.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "docker"

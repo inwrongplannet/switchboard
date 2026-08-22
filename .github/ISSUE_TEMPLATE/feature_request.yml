@@ -1,0 +1,65 @@
+name: Feature request
+description: Suggest something SwitchBoard should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a look at [TODOS.md](https://github.com/sankalp-happy/switchboard/blob/main/TODOS.md)
+        first — several known gaps are already written up there with context, and yours
+        may be one of them.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: >
+        Describe the situation, not the solution. What are you trying to do that
+        SwitchBoard makes hard or impossible right now?
+      placeholder: |
+        I run SwitchBoard for three teams with separate client tokens and I cannot
+        tell which team is burning the Groq quota.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+      description: Your idea for a fix, if you have one. It is fine to leave this vague.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried instead?
+      description: Workarounds, other tools, or why the existing behaviour does not cover it.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of SwitchBoard?
+      multiple: true
+      options:
+        - Gateway / completions endpoint
+        - Semantic cache
+        - Key rotation and failover
+        - Admin API or dashboard
+        - Observability (Prometheus / Grafana)
+        - Providers (Groq / Google / Anthropic)
+        - Setup, Docker, or deployment
+        - Documentation
+        - Something else
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Would you be up for building it?
+      options:
+        - label: I would be willing to open a PR for this
+          required: false
