@@ -232,6 +232,33 @@ async def test_health_reports_cache_status(raw_client):
     assert resp.json()["cache"] in ("ok", "unavailable", "unknown")
 
 
+# ---- /metrics -----------------------------------------------------------
+#
+# The gateway port is published to the host on purpose, so an open /metrics was
+# readable by anything that could route here. It leaks per-endpoint request
+# counts, latency histograms and the ACTIVE_KEYS gauge per provider.
+
+@pytest.mark.asyncio
+async def test_metrics_requires_admin(raw_client):
+    resp = await raw_client.get("/metrics")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_client_token_cannot_read_metrics(client_scope_client):
+    resp = await client_scope_client.get("/metrics")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_metrics_accessible_with_admin_token(admin_client):
+    """Prometheus scrapes with an admin token — this is that path."""
+    resp = await admin_client.get("/metrics")
+    assert resp.status_code == 200
+    # Proves the guard wraps the real exporter, not an empty stub.
+    assert "http_requests_total" in resp.text
+
+
 # ---- OpenAPI surface ----------------------------------------------------
 
 @pytest.mark.asyncio

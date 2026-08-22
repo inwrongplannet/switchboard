@@ -152,6 +152,45 @@ else
          "The full admin API map, including request bodies, is readable anonymously."
 fi
 
+# ---- 7b. /metrics is not anonymously readable ----------------------------
+code="$(status GET /metrics)"
+if [[ "$code" == "401" ]]; then
+    pass "/metrics requires a credential (401)"
+else
+    fail "/metrics returned ${code}, expected 401" \
+         "Request counts, latency histograms and the per-provider key count are public."
+fi
+
+code="$(status GET /metrics -H "Authorization: Bearer ${ADMIN_TOKEN}")"
+if [[ "$code" == "200" ]]; then
+    pass "/metrics accepts a valid admin token (Prometheus can still scrape)"
+else
+    fail "/metrics returned ${code} with a valid admin token" \
+         "Prometheus scrapes this path — guarding it too hard blinds the dashboards."
+fi
+
+# The token must not be baked into the gateway image: the Dockerfile does
+# COPY . ., so only .dockerignore keeps a live admin credential out of every
+# layer. Only the Prometheus container needs it, via the bind-mount.
+if grep -qE '^[[:space:]]*prometheus/scrape_token[[:space:]]*$' .dockerignore 2>/dev/null; then
+    pass ".dockerignore keeps the scrape token out of the image"
+else
+    fail ".dockerignore does not exclude prometheus/scrape_token" \
+         "COPY . . bakes a live admin token into every gateway image layer."
+fi
+
+# The scrape credential is a bind-mount. If the file is missing, Docker creates
+# a DIRECTORY at that path and Prometheus fails with an unhelpful read error.
+if [[ -f prometheus/scrape_token ]]; then
+    pass "prometheus/scrape_token exists (Prometheus can authenticate its scrape)"
+elif [[ -d prometheus/scrape_token ]]; then
+    fail "prometheus/scrape_token is a DIRECTORY, not a file" \
+         "Docker created it because the file was missing. rm -rf it and run ./setup.sh."
+else
+    fail "prometheus/scrape_token is missing" \
+         "Run ./setup.sh to write it, or Prometheus will scrape /metrics unauthenticated."
+fi
+
 # ---- 8. No CORS headers on a cross-origin request ------------------------
 #
 # The Origin header is MANDATORY here. CORSMiddleware only emits
@@ -171,6 +210,19 @@ if printf '%s' "$HEADERS" | grep -qi '^access-control-allow-credentials'; then
     fail "Gateway sent Access-Control-Allow-Credentials to a cross-origin request"
 else
     pass "No Access-Control-Allow-Credentials sent to a cross-origin request"
+fi
+
+# ---- 8b. The repo is not bind-mounted into the gateway -------------------
+#
+# Static only, and deliberately so: `- .:/app` puts .env — ENCRYPTION_KEY
+# included — inside the container, and nothing observable from outside reveals
+# that. It is a one-line edit to reintroduce, which is exactly why it is checked
+# here rather than trusted to review.
+if grep -qE '^[[:space:]]*-[[:space:]]*\.:/app[[:space:]]*$' docker-compose.yml 2>/dev/null; then
+    fail "docker-compose.yml bind-mounts the repo into the gateway" \
+         "Remove '- .:/app'. It carries .env, so ENCRYPTION_KEY sits next to the DB it decrypts."
+else
+    pass "docker-compose.yml does not bind-mount the repo (.env stays out of the container)"
 fi
 
 # ---- 9. Grafana requires a login ----------------------------------------

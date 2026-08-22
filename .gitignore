@@ -52,3 +52,6 @@ data/
 # setup.sh failure logs
 setup-failure-*.log
 .gstack/
+
+# Prometheus scrape credential — a copy of an admin token, written by ./setup.sh
+prometheus/scrape_token

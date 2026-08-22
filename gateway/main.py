@@ -205,7 +205,26 @@ async def swagger_ui():
     return HTMLResponse(_DOCS_HTML)
 
 # Prometheus auto-instrumentation (latency histograms, request counts per endpoint)
-Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+#
+# Behind require_admin. The page is not "just uptime": it carries per-endpoint
+# request counts, latency histograms and the ACTIVE_KEYS gauge per provider —
+# enough to read off traffic volume, which providers are live, and how many keys
+# are held. The gateway port is published to the host on purpose (that is the
+# product), so an unauthenticated /metrics was readable by anything that could
+# route here.
+#
+# expose() forwards **kwargs to app.get(), which is how the guard attaches
+# without wrapping the instrumentator's own handler.
+#
+# Prometheus authenticates its scrape with the first ADMIN_TOKENS entry, read
+# from prometheus/scrape_token (see prometheus/prometheus.yml).
+# ponytail: reuses the admin scope rather than adding a metrics-only one, so
+# the Prometheus container holds a full admin credential. Add a METRICS_TOKENS
+# scope in gateway/auth.py if Prometheus ever stops being as trusted as the
+# gateway itself.
+Instrumentator().instrument(app).expose(
+    app, endpoint="/metrics", dependencies=[Depends(require_admin)]
+)
 
 router = Router()
 cache = RedisCache()

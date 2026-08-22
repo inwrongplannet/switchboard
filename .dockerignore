@@ -26,6 +26,11 @@ dist/
 .env.*
 !.env.example
 
+# Prometheus scrape credential (a copy of an admin token). Only the Prometheus
+# container needs it, and it gets it via a bind-mount — COPY . . would otherwise
+# bake a live admin token into the gateway image.
+prometheus/scrape_token
+
 # Data directory (SQLite DB) - mounted at runtime via volume
 data/
 *.db

@@ -33,9 +33,6 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
     }
 
-    location /metrics {
-        proxy_pass ${API_URL}/metrics;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
+    # No /metrics proxy: the dashboard never fetched it, and it was a second
+    # anonymous path to the metrics page on the admin-UI port.
 }

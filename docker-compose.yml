@@ -16,7 +16,17 @@ services:
     depends_on:
       - redis
     volumes:
-      - .:/app
+      # The repo is deliberately NOT bind-mounted. `- .:/app` carried .env into
+      # the container, which meant ENCRYPTION_KEY sat next to the database it
+      # decrypts — any code execution in the gateway read every provider key and
+      # every token, defeating the encryption-at-rest in core/key_manager.py.
+      # .dockerignore does not apply to bind-mounts, so it could not be excluded.
+      # The Dockerfile already COPYs the app in and the CMD has no --reload, so
+      # the mount bought nothing but a skipped rebuild. Re-adding it reopens the
+      # hole; scripts/verify-hardening.sh fails if you do.
+      #
+      # For hot-reload dev, put it in an untracked docker-compose.override.yml,
+      # which Compose merges automatically for local `up`.
       - switchboard-data:/app/data
 
   redis:
@@ -47,6 +57,11 @@ services:
       - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # /metrics is behind require_admin, so the scrape needs a credential.
+      # Written by ./setup.sh from the first ADMIN_TOKENS entry, never committed.
+      # If this file is missing Docker creates a DIRECTORY here and Prometheus
+      # fails to read it — run ./setup.sh rather than creating it by hand.
+      - ./prometheus/scrape_token:/etc/prometheus/scrape_token:ro
     depends_on:
       - gateway
 

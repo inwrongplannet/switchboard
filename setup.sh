@@ -14,6 +14,10 @@ cd "$SCRIPT_DIR"
 
 readonly ENV_FILE=".env"
 readonly ENV_EXAMPLE=".env.example"
+# Bind-mounted into the Prometheus container, which authenticates its scrape of
+# the admin-guarded /metrics. Holds a copy of the first ADMIN_TOKENS entry, so
+# it is gitignored and chmod 600 like .env.
+readonly SCRAPE_TOKEN_FILE="prometheus/scrape_token"
 readonly HEALTH_TIMEOUT=150   # seconds to wait for the gateway to answer /health
 
 # Host ports, as "ENV_VAR:default:label". Each is overridable in .env, so a busy
@@ -583,6 +587,15 @@ configure() {
     ADMIN_TOKEN_VALUE="$ENSURED_SECRET"
     ensure_secret CLIENT_TOKENS "Client token"
     CLIENT_TOKEN_VALUE="$ENSURED_SECRET"
+
+    # Prometheus scrapes the admin-guarded /metrics, and cannot read .env — it
+    # does not expand env vars in prometheus.yml. Written unconditionally (not
+    # only when missing) so a rotated ADMIN_TOKENS does not leave a stale token
+    # here, and even in --minimal mode, because a missing file makes Docker
+    # create a directory at the bind-mount path.
+    printf '%s' "${ADMIN_TOKEN_VALUE%%,*}" > "$SCRAPE_TOKEN_FILE"
+    chmod 600 "$SCRAPE_TOKEN_FILE"
+    ok "Wrote the Prometheus scrape token to $SCRAPE_TOKEN_FILE"
     ensure_secret REDIS_PASSWORD "Redis password"
 
     # Grafana's admin password. Generated even in --minimal mode, because

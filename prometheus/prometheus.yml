@@ -5,6 +5,12 @@ global:
 scrape_configs:
   - job_name: "switchboard-gateway"
     metrics_path: "/metrics"
+    # /metrics is admin-guarded (gateway/main.py). A file rather than an inline
+    # token because Prometheus does not expand env vars in this config, and a
+    # live admin token must not be committed. ./setup.sh writes it.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/scrape_token
     static_configs:
       - targets: ["gateway:8000"]
         labels:
